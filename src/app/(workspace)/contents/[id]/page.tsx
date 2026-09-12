@@ -1,0 +1,46 @@
+import { notFound } from 'next/navigation';
+import { z } from 'zod';
+import { context, checked, required } from '@/lib/security/context';
+import { ContentDetail } from '@/features/content/detail';
+import type { Content } from '@/lib/domain';
+export default async function Page({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  if (!z.uuid().safeParse(id).success) notFound();
+  const ctx = await context();
+  const item = checked(
+    await ctx.db
+      .from('content_items')
+      .select('*,content_variants(*,content_media(*))')
+      .eq('id', id)
+      .eq('workspace_id', ctx.workspaceId)
+      .maybeSingle(),
+  ) as Content | null;
+  if (!item) notFound();
+  for (const variant of item.content_variants)
+    for (const media of variant.content_media) {
+      media.url = (
+        await ctx.db.storage.from('brand-assets').createSignedUrl(media.storage_path, 900)
+      ).data?.signedUrl;
+    }
+  const events = checked(
+    await ctx.db
+      .from('content_events')
+      .select('id,event,created_at')
+      .eq('content_id', id)
+      .eq('workspace_id', ctx.workspaceId)
+      .order('created_at', { ascending: false })
+      .limit(50),
+  );
+  const company = required(
+    await ctx.db.from('workspaces').select('name,timezone').eq('id', ctx.workspaceId).single(),
+  );
+  return (
+    <ContentDetail
+      initial={item}
+      company={company.name}
+      timezone={company.timezone}
+      canEdit={ctx.role !== 'VIEWER'}
+      events={events || []}
+    />
+  );
+}
