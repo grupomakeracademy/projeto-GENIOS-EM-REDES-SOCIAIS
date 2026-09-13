@@ -1,6 +1,8 @@
 import { context, checked } from '@/lib/security/context';
 import { Library } from '@/features/library/view';
 import type { Asset } from '@/lib/domain';
+import { isSuperAdmin } from '@/lib/security/super-admin';
+
 export default async function Page({ searchParams }: { searchParams: Promise<{ page?: string }> }) {
   const ctx = await context(),
     page = Math.max(1, Number((await searchParams).page) || 1);
@@ -22,12 +24,13 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ p
     asset.url = (await ctx.db.storage.from('brand-assets').createSignedUrl(asset.storage_path, 900))
       .data?.signedUrl;
 
+  const isSuper = isSuperAdmin(ctx.user);
   const [userAssetsResult, profileResult] = await Promise.all([
     ctx.db.from('assets').select('size').eq('created_by', ctx.user.id),
     ctx.db.from('profiles').select('storage_quota_mb').eq('id', ctx.user.id).maybeSingle(),
   ]);
   const userUsedBytes = (userAssetsResult.data || []).reduce((acc, a) => acc + (a.size || 0), 0);
-  const userQuotaMB = profileResult.data?.storage_quota_mb ?? 100;
+  const userQuotaMB = isSuper ? -1 : (profileResult.data?.storage_quota_mb ?? 100);
 
   return (
     <Library
@@ -37,6 +40,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ p
       total={result.count || 0}
       canEdit={ctx.role !== 'VIEWER'}
       canAdmin={ctx.role === 'ADMIN'}
+      isSuperAdmin={isSuper}
       userUsedBytes={userUsedBytes}
       userQuotaMB={userQuotaMB}
     />

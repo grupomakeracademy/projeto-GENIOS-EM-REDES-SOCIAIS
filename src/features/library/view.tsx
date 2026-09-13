@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { File, Upload, HardDrive, Shield } from 'lucide-react';
+import { File, Upload, HardDrive, Shield, Lock, X } from 'lucide-react';
 import { Card, Button, Field, Empty, Modal, Notice, useT, useAction, api } from '@/components/ui';
 import type { Asset } from '@/lib/domain';
 import { AssetAgents, type AssetAgent } from './agent-assets';
@@ -19,6 +19,7 @@ export function Library({
   items,
   canEdit,
   canAdmin = false,
+  isSuperAdmin = false,
   total,
   page,
   agents,
@@ -28,6 +29,7 @@ export function Library({
   items: Asset[];
   canEdit: boolean;
   canAdmin?: boolean;
+  isSuperAdmin?: boolean;
   total: number;
   page: number;
   agents: AssetAgent[];
@@ -42,6 +44,7 @@ export function Library({
     [selectedFilesCount, setSelectedFilesCount] = useState(0),
     [selectedBatchBytes, setSelectedBatchBytes] = useState(0),
     [batchError, setBatchError] = useState(''),
+    [requestModalOpen, setRequestModalOpen] = useState(false),
     [adminModalOpen, setAdminModalOpen] = useState(false),
     [adminUsers, setAdminUsers] = useState<UserQuotaItem[]>([]),
     [loadingAdminUsers, setLoadingAdminUsers] = useState(false),
@@ -150,10 +153,15 @@ export function Library({
               </div>
             </div>
           </div>
-          {canAdmin && (
-            <Button secondary type="button" onClick={openAdminModal}>
+          {isSuperAdmin ? (
+            <Button secondary type="button" onClick={() => router.push('/settings?tab=library')}>
               <Shield size={16} />
               Gerenciar espaço dos usuários
+            </Button>
+          ) : (
+            <Button secondary type="button" onClick={() => setRequestModalOpen(true)}>
+              <Shield size={16} />
+              Solicite mais armazenamento
             </Button>
           )}
         </div>
@@ -473,6 +481,124 @@ export function Library({
             </div>
           )}
         </Modal>
+      )}
+
+      {/* Solicitar Mais Armazenamento Popup — Usuários comuns */}
+      {requestModalOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.65)',
+            backdropFilter: 'blur(4px)',
+            zIndex: 9999,
+            display: 'grid',
+            placeItems: 'center',
+            padding: 16,
+          }}
+          onClick={() => setRequestModalOpen(false)}
+        >
+          <div
+            style={{
+              background: '#ffffff',
+              borderRadius: 20,
+              padding: '36px 32px 32px',
+              maxWidth: 480,
+              width: '100%',
+              position: 'relative',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+              textAlign: 'center',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setRequestModalOpen(false)}
+              style={{
+                position: 'absolute',
+                top: 20,
+                right: 20,
+                background: 'none',
+                border: 'none',
+                color: '#64748b',
+                cursor: 'pointer',
+                padding: 6,
+                borderRadius: 6,
+                display: 'grid',
+                placeItems: 'center',
+              }}
+              aria-label="Fechar"
+            >
+              <X size={20} />
+            </button>
+
+            <div
+              style={{
+                width: 72,
+                height: 72,
+                borderRadius: 22,
+                background: '#fffbeb',
+                border: '1px solid #fef08a',
+                display: 'grid',
+                placeItems: 'center',
+                margin: '0 auto 20px',
+              }}
+            >
+              <Lock size={32} color="#f59e0b" strokeWidth={2.4} />
+            </div>
+
+            <h2
+              style={{
+                fontSize: '22px',
+                fontWeight: 700,
+                color: '#0f172a',
+                margin: '0 0 16px',
+                letterSpacing: '-0.02em',
+              }}
+            >
+              Acesso Restrito
+            </h2>
+
+            <p
+              style={{
+                fontSize: '15px',
+                color: '#334155',
+                lineHeight: 1.6,
+                margin: '0 0 28px',
+              }}
+            >
+              Entre em contato com o Administrador para solicitar mais espaço de armazenamento pelo WhatsApp{' '}
+              <a
+                href="https://wa.me/5519988788759"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: '#2563eb', textDecoration: 'none', fontWeight: 600 }}
+              >
+                (19) 98878-8759
+              </a>.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setRequestModalOpen(false)}
+              style={{
+                width: '100%',
+                padding: '13px 24px',
+                background: 'linear-gradient(135deg, #3b82f6 0%, #4f46e5 100%)',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: 12,
+                fontSize: '15px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                boxShadow: '0 4px 14px rgba(59, 130, 246, 0.35)',
+                transition: 'opacity 0.15s ease',
+              }}
+            >
+              Entendi
+            </button>
+          </div>
+        </div>
       )}
     </>
   );

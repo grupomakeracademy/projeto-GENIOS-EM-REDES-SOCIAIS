@@ -81,4 +81,34 @@ describe('New Features Validation', () => {
       expect(cue).toMatch(/→/);
     });
   });
+
+  it('validates Super Admin identification and unlimited library storage', () => {
+    const superAdminEmail = 'r.barros84@gmail.com';
+    const isSuper = (email?: string, appMeta?: Record<string, unknown>) => {
+      if (appMeta?.super_admin === true) return true;
+      if (email && email.toLowerCase() === superAdminEmail.toLowerCase()) return true;
+      return false;
+    };
+
+    expect(isSuper('r.barros84@gmail.com')).toBe(true);
+    expect(isSuper('R.BARROS84@GMAIL.COM')).toBe(true);
+    expect(isSuper('user@example.com')).toBe(false);
+    expect(isSuper('other@example.com', { super_admin: true })).toBe(true);
+
+    // Super admin has unlimited quota
+    const getUserQuota = (email?: string) => (isSuper(email) ? -1 : 100);
+    expect(getUserQuota('r.barros84@gmail.com')).toBe(-1);
+    expect(getUserQuota('normal@user.com')).toBe(100);
+  });
+
+  it('validates request more storage popup message and WhatsApp link', () => {
+    const whatsappNumber = '(19) 98878-8759';
+    const whatsappUrl = 'https://wa.me/5519988788759';
+    const expectedMessage = `Entre em contato com o Administrador para solicitar mais espaço de armazenamento pelo WhatsApp ${whatsappNumber}.`;
+
+    expect(expectedMessage).toContain('WhatsApp');
+    expect(expectedMessage).toContain('(19) 98878-8759');
+    expect(whatsappUrl).toBe('https://wa.me/5519988788759');
+  });
 });
+

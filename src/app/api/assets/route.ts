@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { guard, checked, required, fail, AppError } from '@/lib/security/context';
 import { adminClient } from '@/lib/supabase/server';
 import { validateFile } from '@/lib/security/uploads';
+import { isSuperAdmin } from '@/lib/security/super-admin';
 export async function GET(request: Request) {
   try {
     const ctx = await guard(request),
@@ -47,14 +48,15 @@ export async function POST(request: Request) {
       .eq('created_by', ctx.user.id);
     const usedBytes = (userAssets || []).reduce((acc, a) => acc + (a.size || 0), 0);
 
+    const isSuper = isSuperAdmin(ctx.user);
     const { data: profile } = await ctx.db
       .from('profiles')
       .select('storage_quota_mb')
       .eq('id', ctx.user.id)
       .maybeSingle();
 
-    const quotaMB = profile?.storage_quota_mb ?? 100;
-    const isUnlimited = quotaMB === -1 || quotaMB === null;
+    const quotaMB = isSuper ? -1 : (profile?.storage_quota_mb ?? 100);
+    const isUnlimited = isSuper || quotaMB === -1 || quotaMB === null;
 
     if (!isUnlimited && usedBytes + batchSize > quotaMB * 1024 * 1024) {
       const usedMB = (usedBytes / (1024 * 1024)).toFixed(1);

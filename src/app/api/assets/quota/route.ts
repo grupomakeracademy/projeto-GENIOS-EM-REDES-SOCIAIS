@@ -1,10 +1,12 @@
 import { z } from 'zod';
 import { guard, fail, AppError, checked } from '@/lib/security/context';
 import { adminClient } from '@/lib/supabase/server';
+import { isSuperAdmin, requireSuperAdmin } from '@/lib/security/super-admin';
 
 export async function GET(request: Request) {
   try {
     const ctx = await guard(request, 'read');
+    const isSuper = isSuperAdmin(ctx.user);
 
     // Current user's assets
     const { data: userAssets } = await ctx.db
@@ -19,8 +21,8 @@ export async function GET(request: Request) {
       .eq('id', ctx.user.id)
       .maybeSingle();
 
-    const quotaMB = profile?.storage_quota_mb ?? 100;
-    const isUnlimited = quotaMB === -1 || quotaMB === null;
+    const quotaMB = isSuper ? -1 : (profile?.storage_quota_mb ?? 100);
+    const isUnlimited = isSuper || quotaMB === -1 || quotaMB === null;
 
     let users: Array<{
       id: string;
@@ -32,7 +34,7 @@ export async function GET(request: Request) {
       role: string;
     }> = [];
 
-    if (ctx.role === 'ADMIN') {
+    if (isSuper) {
       const db = adminClient();
       const members = checked(
         await db
@@ -76,6 +78,7 @@ export async function GET(request: Request) {
       quotaMB,
       isUnlimited,
       isAdmin: ctx.role === 'ADMIN',
+      isSuperAdmin: isSuper,
       users,
     });
   } catch (e) {
@@ -85,7 +88,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const ctx = await guard(request, 'admin');
+    const ctx = await guard(request, 'read');
+    requireSuperAdmin(ctx.user);
     const { userId, quotaMB } = z
       .object({
         userId: z.string().uuid(),
