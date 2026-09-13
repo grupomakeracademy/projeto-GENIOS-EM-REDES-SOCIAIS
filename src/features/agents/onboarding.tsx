@@ -92,8 +92,7 @@ export function Onboarding({ initial }: { initial: Record<string, unknown> }) {
             void action.act(async () => {
               await api('onboarding', 'POST', { draft, complete: step === 8 });
               if (step === 8) {
-                router.push('/dashboard');
-                router.refresh();
+                window.location.href = '/dashboard';
               } else setStep(step + 1);
             }, '');
           }}

@@ -11,6 +11,8 @@ import {
   CheckCircle2,
   Clock,
   FileText,
+  ThumbsUp,
+  XCircle,
 } from 'lucide-react';
 import { Button, Card, Empty, StatusBadge, useT, useLocale, Modal, Field } from '@/components/ui';
 import { SocialLogo } from '@/components/social-logos';
@@ -29,10 +31,12 @@ type CalendarProps = {
   items: CalendarContentItem[];
   upcoming: CalendarContentItem[];
   summary: {
-    scheduled: number;
     published: number;
+    scheduled: number;
+    approved: number;
     review: number;
     draft: number;
+    rejected: number;
   };
   distribution: Record<string, number>;
   timezone: string;
@@ -376,20 +380,6 @@ export function Calendar({
             </div>
 
             <div className="cal-summary-grid">
-              {/* Agendados */}
-              <div className="cal-summary-box">
-                <div
-                  className="cal-summary-icon"
-                  style={{ background: '#eff6ff', color: '#2563eb' }}
-                >
-                  <CalendarDays size={20} />
-                </div>
-                <div className="cal-summary-data">
-                  <strong>{summary.scheduled}</strong>
-                  <span>Conteúdos agendados</span>
-                </div>
-              </div>
-
               {/* Publicados */}
               <div className="cal-summary-box">
                 <div
@@ -401,6 +391,34 @@ export function Calendar({
                 <div className="cal-summary-data">
                   <strong>{summary.published}</strong>
                   <span>Publicados</span>
+                </div>
+              </div>
+
+              {/* Agendados */}
+              <div className="cal-summary-box">
+                <div
+                  className="cal-summary-icon"
+                  style={{ background: '#eff6ff', color: '#2563eb' }}
+                >
+                  <CalendarDays size={20} />
+                </div>
+                <div className="cal-summary-data">
+                  <strong>{summary.scheduled}</strong>
+                  <span>Agendados</span>
+                </div>
+              </div>
+
+              {/* Aprovados */}
+              <div className="cal-summary-box">
+                <div
+                  className="cal-summary-icon"
+                  style={{ background: '#f0fdf4', color: '#16a34a' }}
+                >
+                  <ThumbsUp size={20} />
+                </div>
+                <div className="cal-summary-data">
+                  <strong>{summary.approved}</strong>
+                  <span>Aprovados</span>
                 </div>
               </div>
 
@@ -429,6 +447,20 @@ export function Calendar({
                 <div className="cal-summary-data">
                   <strong>{summary.draft}</strong>
                   <span>Rascunhos</span>
+                </div>
+              </div>
+
+              {/* Reprovados */}
+              <div className="cal-summary-box">
+                <div
+                  className="cal-summary-icon"
+                  style={{ background: '#fef2f2', color: '#ef4444' }}
+                >
+                  <XCircle size={20} />
+                </div>
+                <div className="cal-summary-data">
+                  <strong>{summary.rejected}</strong>
+                  <span>Reprovados</span>
                 </div>
               </div>
             </div>

@@ -21,6 +21,14 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ p
   for (const asset of items)
     asset.url = (await ctx.db.storage.from('brand-assets').createSignedUrl(asset.storage_path, 900))
       .data?.signedUrl;
+
+  const [userAssetsResult, profileResult] = await Promise.all([
+    ctx.db.from('assets').select('size').eq('created_by', ctx.user.id),
+    ctx.db.from('profiles').select('storage_quota_mb').eq('id', ctx.user.id).maybeSingle(),
+  ]);
+  const userUsedBytes = (userAssetsResult.data || []).reduce((acc, a) => acc + (a.size || 0), 0);
+  const userQuotaMB = profileResult.data?.storage_quota_mb ?? 100;
+
   return (
     <Library
       agents={agents}
@@ -28,6 +36,9 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ p
       page={page}
       total={result.count || 0}
       canEdit={ctx.role !== 'VIEWER'}
+      canAdmin={ctx.role === 'ADMIN'}
+      userUsedBytes={userUsedBytes}
+      userQuotaMB={userQuotaMB}
     />
   );
 }

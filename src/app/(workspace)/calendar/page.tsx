@@ -79,7 +79,7 @@ export default async function Page({
         .order('created_at', { ascending: false })
         .limit(6),
       Promise.all(
-        ['SCHEDULED', 'PUBLISHED', 'AWAITING_REVIEW', 'DRAFT'].map((s) => {
+        ['PUBLISHED', 'SCHEDULED', 'APPROVED', 'AWAITING_REVIEW', 'DRAFT', 'REJECTED'].map((s) => {
           let countQuery = ctx.db
             .from('content_items')
             .select(network ? 'id,content_variants!inner(channel)' : 'id', {
@@ -99,6 +99,10 @@ export default async function Page({
             countQuery = countQuery
               .gte('scheduled_at', date.startOf('month').toUTC().toISO())
               .lte('scheduled_at', date.endOf('month').toUTC().toISO());
+          } else {
+            countQuery = countQuery
+              .gte('created_at', date.startOf('month').toUTC().toISO())
+              .lte('created_at', date.endOf('month').toUTC().toISO());
           }
           return countQuery;
         }),
@@ -137,10 +141,12 @@ export default async function Page({
   }
 
   const summary = {
-    scheduled: monthCounts[0]?.count || 0,
-    published: monthCounts[1]?.count || 0,
-    review: monthCounts[2]?.count || 0,
-    draft: monthCounts[3]?.count || 0,
+    published: monthCounts[0]?.count || 0,
+    scheduled: monthCounts[1]?.count || 0,
+    approved: monthCounts[2]?.count || 0,
+    review: monthCounts[3]?.count || 0,
+    draft: monthCounts[4]?.count || 0,
+    rejected: monthCounts[5]?.count || 0,
   };
 
   return (

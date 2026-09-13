@@ -1,9 +1,10 @@
 'use client';
 import './content.css';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useState, useEffect, useSyncExternalStore, useTransition } from 'react';
+import { useState, useEffect, useRef, useCallback, useSyncExternalStore, useTransition } from 'react';
 import {
   Plus,
+  Minus,
   List,
   LayoutGrid,
   Columns3,
@@ -14,6 +15,8 @@ import {
   Check,
   Layers,
   MousePointerClick,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import {
   Button,
@@ -81,6 +84,225 @@ function ViewToggle({
   );
 }
 
+function KanbanBoard({
+  statuses,
+  displayItems,
+  visibleRuns,
+  canEdit,
+  params,
+  renderRun,
+}: {
+  statuses: readonly string[];
+  displayItems: Content[];
+  visibleRuns: any[];
+  canEdit: boolean;
+  params: ReturnType<typeof useSearchParams>;
+  renderRun: (run: any) => React.ReactNode;
+}) {
+  const kanbanRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+  const [scrollProgress, setScrollProgress] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+  const startXRef = useRef(0);
+  const scrollLeftRef = useRef(0);
+  const hasDraggedRef = useRef(false);
+
+  const checkScroll = useCallback(() => {
+    const el = kanbanRef.current;
+    if (!el) return;
+    const max = el.scrollWidth - el.clientWidth;
+    setCanScrollLeft(el.scrollLeft > 6);
+    setCanScrollRight(max - el.scrollLeft > 6);
+    setScrollProgress(max > 0 ? (el.scrollLeft / max) * 100 : 0);
+  }, []);
+
+  useEffect(() => {
+    const el = kanbanRef.current;
+    if (!el) return;
+    checkScroll();
+    el.addEventListener('scroll', checkScroll, { passive: true });
+    window.addEventListener('resize', checkScroll);
+    return () => {
+      el.removeEventListener('scroll', checkScroll);
+      window.removeEventListener('resize', checkScroll);
+    };
+  }, [checkScroll]);
+
+  const scrollSide = (direction: 'left' | 'right') => {
+    const el = kanbanRef.current;
+    if (!el) return;
+    const offset = direction === 'left' ? -340 : 340;
+    el.scrollBy({ left: offset, behavior: 'smooth' });
+  };
+
+  const onMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    if (
+      target.closest(
+        'button, a, input, textarea, select, .execution-menu, .modal, [role="button"]',
+      )
+    ) {
+      return;
+    }
+    const el = kanbanRef.current;
+    if (!el) return;
+    setIsDragging(true);
+    hasDraggedRef.current = false;
+    startXRef.current = e.pageX - el.offsetLeft;
+    scrollLeftRef.current = el.scrollLeft;
+  };
+
+  const onMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isDragging || !kanbanRef.current) return;
+    e.preventDefault();
+    const x = e.pageX - kanbanRef.current.offsetLeft;
+    const walk = x - startXRef.current;
+    if (Math.abs(walk) > 4) {
+      hasDraggedRef.current = true;
+    }
+    kanbanRef.current.scrollLeft = scrollLeftRef.current - walk;
+  };
+
+  const onMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  const onClickCapture = (e: React.MouseEvent) => {
+    if (hasDraggedRef.current) {
+      e.stopPropagation();
+      e.preventDefault();
+      hasDraggedRef.current = false;
+    }
+  };
+
+  const onTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const el = kanbanRef.current;
+    if (!el) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickRatio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const max = el.scrollWidth - el.clientWidth;
+    el.scrollTo({ left: clickRatio * max, behavior: 'smooth' });
+  };
+
+  return (
+    <div className="kanban-wrapper">
+      {/* Floating Side Buttons */}
+      <button
+        type="button"
+        className={`kanban-floating-arrow kanban-floating-left ${canScrollLeft ? 'visible' : ''}`}
+        onClick={() => scrollSide('left')}
+        aria-label="Rolar para a esquerda"
+      >
+        <ChevronLeft size={22} />
+      </button>
+      <button
+        type="button"
+        className={`kanban-floating-arrow kanban-floating-right ${canScrollRight ? 'visible' : ''}`}
+        onClick={() => scrollSide('right')}
+        aria-label="Rolar para a direita"
+      >
+        <ChevronRight size={22} />
+      </button>
+
+      {/* Main Kanban Board Container */}
+      <div
+        ref={kanbanRef}
+        className={`content-kanban ${isDragging ? 'is-dragging' : ''}`}
+        aria-label="Kanban de conteúdos"
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={onMouseUp}
+        onMouseLeave={onMouseUp}
+        onClickCapture={onClickCapture}
+      >
+        {statuses
+          .filter((s) => !params.get('status') || params.get('status')!.split(',').includes(s))
+          .map((s) => {
+            const group = displayItems.filter((i) => i.status === s);
+            const pending = visibleRuns.filter(
+              (r) => (r.status === 'FAILED' ? 'FAILED' : 'GENERATING') === s,
+            );
+            return (
+              <section className={`kanban-column kanban-column-${s}`} key={s}>
+                <header>
+                  <StatusBadge status={s} />
+                  <span className="kanban-counter">{group.length + pending.length}</span>
+                </header>
+                {pending.map(renderRun)}
+                {group.map((item) => (
+                  <ContentExecutionCard
+                    key={item.id}
+                    item={item}
+                    mode="kanban"
+                    canEdit={canEdit}
+                    returnTo={'/contents?' + params}
+                  />
+                ))}
+                {!group.length && !pending.length && (
+                  <div className="kanban-empty-card">
+                    <FileText size={22} className="kanban-empty-icon" />
+                    <strong>Nenhum conteúdo nesta página</strong>
+                    <span>
+                      {s === 'GENERATING'
+                        ? 'Os conteúdos que estiverem sendo gerados aparecerão aqui.'
+                        : s === 'AWAITING_REVIEW'
+                          ? 'Os conteúdos aguardando revisão aparecerão aqui.'
+                          : s === 'SCHEDULED'
+                            ? 'Os conteúdos agendados aparecerão aqui.'
+                            : 'Nenhum conteúdo neste status no momento.'}
+                    </span>
+                  </div>
+                )}
+              </section>
+            );
+          })}
+      </div>
+
+      {/* Sticky Bottom Scrollbar — Always accessible anywhere on page */}
+      <div className="kanban-sticky-bar">
+        <button
+          type="button"
+          className="kanban-sticky-nav-btn"
+          disabled={!canScrollLeft}
+          onClick={() => scrollSide('left')}
+          title="Colunas anteriores"
+          aria-label="Colunas anteriores"
+        >
+          <ChevronLeft size={16} />
+        </button>
+
+        <div
+          className="kanban-sticky-track"
+          onClick={onTrackClick}
+          title="Barra de rolagem horizontal rápida"
+        >
+          <div
+            className="kanban-sticky-thumb"
+            style={{
+              left: `${Math.min(Math.max(scrollProgress, 0), 88)}%`,
+              width: kanbanRef.current
+                ? `${Math.max((kanbanRef.current.clientWidth / kanbanRef.current.scrollWidth) * 100, 12)}%`
+                : '16%',
+            }}
+          />
+        </div>
+
+        <button
+          type="button"
+          className="kanban-sticky-nav-btn"
+          disabled={!canScrollRight}
+          onClick={() => scrollSide('right')}
+          title="Próximas colunas"
+          aria-label="Próximas colunas"
+        >
+          <ChevronRight size={16} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function ContentList({
   items,
   total,
@@ -109,7 +331,96 @@ export function ContentList({
     [instruction, setInstruction] = useState(''),
     [imageCount, setImageCount] = useState(2),
     [isCarousel, setIsCarousel] = useState(true),
-    [cta, setCta] = useState('');
+    [cta, setCta] = useState(''),
+    [savingDraft, setSavingDraft] = useState(false),
+    [pautaMagicUsed, setPautaMagicUsed] = useState(false),
+    [pautaBusy, setPautaBusy] = useState(false),
+    [ctaMagicUsed, setCtaMagicUsed] = useState(false),
+    [ctaBusy, setCtaBusy] = useState(false),
+    [magicError, setMagicError] = useState('');
+
+  function openCreateModal() {
+    const agent = agents.find((a) => a.id === params.get('agent'));
+    if (agent) {
+      setSelected(agent.id);
+      if (agent.channels?.length) setChannels(agent.channels);
+    }
+    setPautaMagicUsed(false);
+    setCtaMagicUsed(false);
+    setPautaBusy(false);
+    setCtaBusy(false);
+    setMagicError('');
+    setSavingDraft(false);
+    setCreateOpen(true);
+  }
+
+  async function handleMagicPauta() {
+    if (!instruction.trim() || pautaMagicUsed || pautaBusy) return;
+    setPautaBusy(true);
+    setMagicError('');
+    try {
+      const res = await api('ai/magic-prompt', 'POST', {
+        text: instruction.trim(),
+        type: 'instruction',
+        agent_id: selected,
+      });
+      if (res?.refinedText) {
+        setInstruction(res.refinedText);
+        setPautaMagicUsed(true);
+      }
+    } catch (e) {
+      setMagicError(e instanceof Error ? e.message : 'Falha ao executar Prompt Mágico');
+    } finally {
+      setPautaBusy(false);
+    }
+  }
+
+  async function handleMagicCta() {
+    if (!cta.trim() || ctaMagicUsed || ctaBusy) return;
+    setCtaBusy(true);
+    setMagicError('');
+    try {
+      const res = await api('ai/magic-prompt', 'POST', {
+        text: cta.trim(),
+        type: 'cta',
+        agent_id: selected,
+      });
+      if (res?.refinedText) {
+        setCta(res.refinedText);
+        setCtaMagicUsed(true);
+      }
+    } catch (e) {
+      setMagicError(e instanceof Error ? e.message : 'Falha ao executar Prompt Mágico');
+    } finally {
+      setCtaBusy(false);
+    }
+  }
+
+  async function handleSaveDraft() {
+    if (savingDraft || action.busy || !selected || selectedChannels.length === 0) return;
+    setSavingDraft(true);
+    setMagicError('');
+    try {
+      await api('content', 'POST', {
+        agent_id: selected,
+        instruction: instruction.trim(),
+        image_style: imageStyle,
+        is_carousel: isCarousel,
+        cta: cta.trim(),
+        channels: selectedChannels,
+        image_count: Number(imageCount),
+        status: 'DRAFT',
+      });
+      setRevision((v) => v + 1);
+      setCreateOpen(false);
+      router.push(`/contents?status=DRAFT&agent=${selected}`);
+      router.refresh();
+    } catch (e) {
+      setMagicError(e instanceof Error ? e.message : 'Falha ao salvar rascunho');
+    } finally {
+      setSavingDraft(false);
+    }
+  }
   const network = params.get('network') || '';
   const [revision, setRevision] = useState(0);
   const [filterPending, startFilterTransition] = useTransition();
@@ -205,7 +516,7 @@ export function ContentList({
         </select>
         <ViewToggle mode={viewMode} onChange={changeView} />
         {canEdit ? (
-          <Button onClick={() => {const agent=agents.find(a=>a.id===params.get('agent'));if(agent){setSelected(agent.id);setChannels(agent.channels);}setCreateOpen(true);}}>
+          <Button onClick={openCreateModal}>
             <Plus size={16} />
             {t('newContent')}
           </Button>
@@ -253,49 +564,14 @@ export function ContentList({
           </section>
         )}
         {viewMode === 'kanban' ? (
-          <div className="content-kanban" aria-label="Kanban de conteúdos">
-            {statuses
-              .filter((s) => !params.get('status') || params.get('status')!.split(',').includes(s))
-              .map((s) => {
-                const group = displayItems.filter((i) => i.status === s);
-                const pending = visibleRuns.filter(
-                  (r) => (r.status === 'FAILED' ? 'FAILED' : 'GENERATING') === s,
-                );
-                return (
-                  <section className={`kanban-column kanban-column-${s}`} key={s}>
-                    <header>
-                      <StatusBadge status={s} />
-                      <span className="kanban-counter">{group.length + pending.length}</span>
-                    </header>
-                    {pending.map(renderRun)}
-                    {group.map((item) => (
-                      <ContentExecutionCard
-                        key={item.id}
-                        item={item}
-                        mode="kanban"
-                        canEdit={canEdit}
-                        returnTo={'/contents?' + params}
-                      />
-                    ))}
-                    {!group.length && !pending.length && (
-                      <div className="kanban-empty-card">
-                        <FileText size={22} className="kanban-empty-icon" />
-                        <strong>Nenhum conteúdo nesta página</strong>
-                        <span>
-                          {s === 'GENERATING'
-                            ? 'Os conteúdos que estiverem sendo gerados aparecerão aqui.'
-                            : s === 'AWAITING_REVIEW'
-                              ? 'Os conteúdos aguardando revisão aparecerão aqui.'
-                              : s === 'SCHEDULED'
-                                ? 'Os conteúdos agendados aparecerão aqui.'
-                                : 'Nenhum conteúdo neste status no momento.'}
-                        </span>
-                      </div>
-                    )}
-                  </section>
-                );
-              })}
-          </div>
+          <KanbanBoard
+            statuses={statuses}
+            displayItems={displayItems}
+            visibleRuns={visibleRuns}
+            canEdit={canEdit}
+            params={params}
+            renderRun={renderRun}
+          />
         ) : (
           <div className={'content-collection collection-' + viewMode}>
             {displayItems.map((item) => (
@@ -406,7 +682,27 @@ export function ContentList({
             </div>
 
             <div className="new-content-field">
-              <label className="new-content-label">Pauta / instrução opcional</label>
+              <div className="field-label-with-action">
+                <label className="new-content-label">Pauta / instrução opcional</label>
+                {pautaMagicUsed ? (
+                  <span className="magic-prompt-badge-used">✓ Prompt Mágico utilizado</span>
+                ) : (
+                  <button
+                    type="button"
+                    className="magic-prompt-btn"
+                    disabled={!instruction.trim() || pautaBusy}
+                    onClick={handleMagicPauta}
+                    title={
+                      !instruction.trim()
+                        ? 'Escreva algo na pauta para habilitar o Prompt Mágico'
+                        : 'Melhorar e organizar com IA'
+                    }
+                  >
+                    <Sparkles size={13} className={pautaBusy ? 'spin-icon' : ''} />
+                    <span>{pautaBusy ? 'Melhorando...' : 'Prompt Mágico'}</span>
+                  </button>
+                )}
+              </div>
               <div className="new-content-textarea-wrapper">
                 <FileText size={18} className="textarea-prefix-icon" />
                 <textarea
@@ -469,20 +765,39 @@ export function ContentList({
 
             <div className="new-content-field">
               <label className="new-content-label">Imagens por canal</label>
-              <input
-                type="number"
-                className="new-content-number-input"
-                name="image_count"
-                min={1}
-                max={10}
-                value={imageCount}
-                onChange={(e) => setImageCount(Number(e.target.value))}
-              />
+              <div className="image-count-stepper-row">
+                <div className="image-count-stepper">
+                  <button
+                    type="button"
+                    className="stepper-btn"
+                    disabled={imageCount <= 1}
+                    onClick={() => setImageCount((prev) => Math.max(1, prev - 1))}
+                    aria-label="Diminuir imagens"
+                  >
+                    <Minus size={16} />
+                  </button>
+                  <span className="stepper-value">{imageCount}</span>
+                  <button
+                    type="button"
+                    className="stepper-btn"
+                    disabled={imageCount >= 6}
+                    onClick={() => setImageCount((prev) => Math.min(6, prev + 1))}
+                    aria-label="Aumentar imagens"
+                  >
+                    <Plus size={16} />
+                  </button>
+                </div>
+                <div className="total-consumption-badge">
+                  <span>
+                    o total de conteúdos consumidos será <strong>{imageCount * selectedChannels.length}</strong>
+                  </span>
+                </div>
+              </div>
             </div>
 
             <div className="new-content-carousel-row">
               <div className="carousel-toggle-label">
-                <Layers size={18} className="field-prefix-icon" />
+                <Layers size={18} className="carousel-icon" />
                 <span>É carrossel?</span>
               </div>
               <div className="carousel-segmented-control">
@@ -504,7 +819,27 @@ export function ContentList({
             </div>
 
             <div className="new-content-field">
-              <label className="new-content-label">CTA</label>
+              <div className="field-label-with-action">
+                <label className="new-content-label">CTA</label>
+                {ctaMagicUsed ? (
+                  <span className="magic-prompt-badge-used">✓ Prompt Mágico utilizado</span>
+                ) : (
+                  <button
+                    type="button"
+                    className="magic-prompt-btn"
+                    disabled={!cta.trim() || ctaBusy}
+                    onClick={handleMagicCta}
+                    title={
+                      !cta.trim()
+                        ? 'Escreva uma chamada para ação para habilitar o Prompt Mágico'
+                        : 'Melhorar CTA com IA'
+                    }
+                  >
+                    <Sparkles size={13} className={ctaBusy ? 'spin-icon' : ''} />
+                    <span>{ctaBusy ? 'Melhorando...' : 'Prompt Mágico'}</span>
+                  </button>
+                )}
+              </div>
               <div className="new-content-input-wrapper">
                 <MousePointerClick size={18} className="field-prefix-icon" />
                 <input
@@ -517,21 +852,33 @@ export function ContentList({
               </div>
             </div>
 
+            {magicError && <Notice message={magicError} error />}
             <Notice {...action} />
 
             <div className="new-content-modal-footer">
-              <Button secondary type="button" onClick={() => setCreateOpen(false)}>
-                Cancelar
-              </Button>
-              <Button
-                className="btn-generate-gradient"
-                disabled={!selected || selectedChannels.length === 0}
-                busy={action.busy}
-                type="submit"
+              <button
+                type="button"
+                className="btn-save-draft"
+                disabled={action.busy || savingDraft || !selected || selectedChannels.length === 0}
+                onClick={handleSaveDraft}
               >
-                <Sparkles size={16} />
-                <span>Gerar agora</span>
-              </Button>
+                <FileText size={16} />
+                <span>{savingDraft ? 'Salvando...' : 'Salvar como rascunho'}</span>
+              </button>
+              <div className="modal-footer-right">
+                <Button secondary type="button" onClick={() => setCreateOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button
+                  className="btn-generate-gradient"
+                  disabled={!selected || selectedChannels.length === 0 || savingDraft}
+                  busy={action.busy}
+                  type="submit"
+                >
+                  <Sparkles size={16} />
+                  <span>Gerar agora</span>
+                </Button>
+              </div>
             </div>
           </form>
         </Modal>

@@ -169,7 +169,7 @@ const messages = {
   routine: ['Rotina', 'Routine', 'Rutina'],
   next: ['Continuar', 'Continue', 'Continuar'],
   back: ['Voltar', 'Back', 'Volver'],
-  finish: ['Criar meu Gênio', 'Create my Genie', 'Crear mi Genio'],
+  finish: ['Criar agente', 'Create agent', 'Crear agente'],
   saveProgress: ['Salvar progresso', 'Save progress', 'Guardar progreso'],
   name: ['Nome', 'Name', 'Nombre'],
   description: ['Descrição', 'Description', 'Descripción'],
