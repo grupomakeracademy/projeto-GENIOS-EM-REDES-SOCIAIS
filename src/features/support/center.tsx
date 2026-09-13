@@ -583,7 +583,22 @@ export function Support({
                                   }, '')
                                 }
                               >
-                                <Paperclip size={16} />
+                                {a.mime_type?.startsWith('image/') ? (
+                                  <img
+                                    src={`/api/support/attachments/${a.id}?preview=1`}
+                                    alt={a.original_name}
+                                    loading="lazy"
+                                    style={{
+                                      width: 100,
+                                      height: 80,
+                                      objectFit: 'contain',
+                                      borderRadius: 8,
+                                      background: 'var(--canvas)',
+                                    }}
+                                  />
+                                ) : (
+                                  <Paperclip size={16} />
+                                )}
                                 {a.original_name}
                                 <small>{(a.size / 1024 / 1024).toFixed(1)} MB</small>
                               </button>

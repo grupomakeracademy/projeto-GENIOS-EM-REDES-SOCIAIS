@@ -38,7 +38,13 @@ export type Ticket = {
   assigned_admin_name?: string | null;
   unread: boolean;
 };
-export type Attachment = { id: string; original_name: string; size: number; message_id: string };
+export type Attachment = {
+  id: string;
+  original_name: string;
+  size: number;
+  message_id: string;
+  mime_type?: string;
+};
 export type Message = {
   id: string;
   message: string;

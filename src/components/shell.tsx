@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 import {
   LayoutDashboard,
@@ -9,6 +9,7 @@ import {
   Bot,
   Share2,
   Folder,
+  BookOpen,
   Settings,
   Headphones,
   Menu,
@@ -26,6 +27,7 @@ const navigation = [
   ['agents', Bot],
   ['channels', Share2],
   ['library', Folder],
+  ['university', BookOpen],
   ['settings', Settings],
   ['support', Headphones],
 ] as const;
@@ -45,6 +47,7 @@ export function Shell({
   const router = useRouter(),
     t = useT(),
     path = usePathname(),
+    params = useSearchParams(),
     [open, setOpen] = useState(false),
     [notifications, setNotifications] = useState<
       { id: string; message: string; href: string }[] | null
@@ -58,7 +61,7 @@ export function Shell({
             <Link
               onClick={() => setOpen(false)}
               key={key}
-              href={`/${key}`}
+              href={`/${key}${params.get('agent') && ['dashboard', 'contents', 'calendar', 'channels', 'agents'].includes(key) ? '?agent=' + encodeURIComponent(params.get('agent')!) : ''}`}
               className={path.startsWith(`/${key}`) ? 'active' : ''}
             >
               <Icon size={23} />
@@ -111,6 +114,9 @@ export function Shell({
             <Menu />
           </button>
           <form action="/search" className="search">
+            {params.get('agent') && (
+              <input type="hidden" name="agent" value={params.get('agent')!} />
+            )}
             <Search size={19} />
             <input aria-label={t('search')} name="q" placeholder={t('search')} minLength={2} />
           </form>
@@ -135,7 +141,10 @@ export function Shell({
             )}
           </Link>
           {role !== 'VIEWER' ? (
-            <Link className="button" href="/contents?new=1">
+            <Link
+              className="button"
+              href={`/contents?new=1${params.get('agent') ? '&agent=' + encodeURIComponent(params.get('agent')!) : ''}`}
+            >
               <Plus size={18} />
               <span>{t('newContent')}</span>
             </Link>

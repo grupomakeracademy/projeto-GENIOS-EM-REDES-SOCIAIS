@@ -15,6 +15,19 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         .eq('workspace_id', ctx.workspaceId)
         .single(),
     );
+    if (item && !(item.strategy as Record<string, unknown>)?.instruction) {
+      const job = await ctx.db.from('background_jobs').select('payload').eq('id', id).maybeSingle();
+      const payload = (job.data?.payload as Record<string, unknown>) || {};
+      if (payload.instruction || payload.image_style || payload.cta || payload.is_carousel !== undefined) {
+        item.strategy = {
+          ...(item.strategy || {}),
+          instruction: (item.strategy as Record<string, unknown>)?.instruction || payload.instruction || '',
+          image_style: (item.strategy as Record<string, unknown>)?.image_style || payload.image_style || '',
+          is_carousel: (item.strategy as Record<string, unknown>)?.is_carousel ?? payload.is_carousel ?? false,
+          cta: (item.strategy as Record<string, unknown>)?.cta || payload.cta || '',
+        };
+      }
+    }
     for (const variant of item.content_variants)
       for (const media of variant.content_media) {
         const signed = await ctx.db.storage

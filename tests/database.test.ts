@@ -30,6 +30,8 @@ beforeAll(async () => {
     '202609110006_regeneration.sql',
     '202609110007_model_registry.sql',
     '202609110009_support.sql',
+    '202609120001_agent_isolation.sql',
+    '202609130001_university.sql',
   ]) {
     const sql = await readFile(
       new URL(`../supabase/migrations/${filename}`, import.meta.url),
@@ -233,7 +235,7 @@ it('enforces content transitions and keeps immutable history', async () => {
 });
 it('claims a job once and persists its attempt count', async () => {
   await db.exec(
-    `insert into background_jobs(workspace_id,type,payload,idempotency_key) values('${wa}','agent_run','{}','one');`,
+    `insert into background_jobs(workspace_id,type,payload,idempotency_key) values('${wa}','agent_run','{"agent_id":"${agentA}"}','one');`,
   );
   expect((await db.query<Record<string, unknown>>('select * from claim_job()')).rows).toHaveLength(
     1,

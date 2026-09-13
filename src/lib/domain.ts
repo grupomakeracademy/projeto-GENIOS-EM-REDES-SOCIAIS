@@ -85,6 +85,8 @@ export const variantSchema = z.object({
 });
 export const variantsSchema = z.object({ variants: z.array(variantSchema).min(1).max(6) });
 export type Content = {
+  created_by?: string | null;
+  responsibles?: { id: string; name: string; avatarUrl?: string }[];
   id: string;
   workspace_id: string;
   agent_id: string;
@@ -169,4 +171,3 @@ export function validateVariants(
     }
   }
 }
-

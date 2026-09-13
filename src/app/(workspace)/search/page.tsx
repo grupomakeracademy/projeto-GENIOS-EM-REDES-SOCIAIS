@@ -2,11 +2,17 @@ import Link from 'next/link';
 import { cookies } from 'next/headers';
 import { context, checked } from '@/lib/security/context';
 import { translate, type Locale } from '@/lib/i18n';
-export default async function Page({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
+import { requireAgent } from '@/lib/security/agent';
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; agent?: string }>;
+}) {
   const ctx = await context(),
     q = ((await searchParams).q || '').replace(/[%_\\]/g, '').slice(0, 160),
     locale = ((await cookies()).get('locale')?.value || 'pt-BR') as Locale;
   const t = (k: string) => translate(locale, k);
+  const agentId = await requireAgent(ctx, (await searchParams).agent);
   const [content, agents, assets] =
     q.length >= 2
       ? await Promise.all([
@@ -14,12 +20,14 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ q
             .from('content_items')
             .select('id,topic')
             .eq('workspace_id', ctx.workspaceId)
+            .filter(agentId ? 'agent_id' : 'workspace_id', 'eq', agentId || ctx.workspaceId)
             .ilike('topic', `%${q}%`)
             .limit(20),
           ctx.db
             .from('agents')
             .select('id,name')
             .eq('workspace_id', ctx.workspaceId)
+            .filter(agentId ? 'id' : 'workspace_id', 'eq', agentId || ctx.workspaceId)
             .ilike('name', `%${q}%`)
             .limit(20),
           ctx.db
@@ -53,7 +61,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ q
           <h2>{t('agents')}</h2>
           {checked(agents)?.map((a) => (
             <p key={a.id}>
-              <Link href="/agents">{a.name}</Link>
+              <Link href={`/agents?agent=${a.id}`}>{a.name}</Link>
             </p>
           ))}
         </section>

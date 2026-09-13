@@ -99,33 +99,38 @@ async function saveImage(
   const prompt = variant.image_prompts[position];
   if (!prompt) throw new Error('invalid_output');
   await renewLease(job);
-  const ai = new AIService(job.workspace_id, job.id),
+  const ai = new AIService(job.workspace_id, job.id, agent.id),
     ratio = channels[variant.channel].ratio;
+  const selectedStyle = String((job.payload as Record<string, unknown>)?.image_style || agent.visual_settings?.style || '').trim();
+  const imagePromptContext = JSON.stringify({
+    visual: { ...agent.visual_settings, ...(selectedStyle ? { style: selectedStyle } : {}) },
+    briefing: agent.briefing,
+    prompt,
+    image_style: selectedStyle || undefined,
+    channel: variant.channel,
+    position,
+    aspect_ratio: ratio,
+    composition_rules: `The image MUST be designed natively for aspect ratio ${ratio}${selectedStyle ? ` in the visual style of "${selectedStyle}"` : ''}. Full-bleed background extending to all edges, with ZERO outer white borders, ZERO margins, and ZERO letterboxing. ALL essential elements—including all text, headlines, titles, subheadings, logos, mascots, characters, icons, speech bubbles, lists, and call-to-action buttons—MUST be comfortably placed within the inner safe zone (at least 8% away from any edge: top, bottom, left, and right). NEVER allow any text, letters, logos, or character faces to touch or be clipped by the borders of the image. Keep generous breathing room around all text and graphic elements.`,
+  });
   const result = await ai.image(
-    JSON.stringify({
-      visual: agent.visual_settings,
-      briefing: agent.briefing,
-      prompt,
-      channel: variant.channel,
-      position,
-    }),
+    imagePromptContext,
     ratio,
     await references(agent),
   );
   await renewLease(job);
-  const [width, height] =
-    ratio === '4:5' ? [1080, 1350] : ratio === '9:16' ? [1080, 1920] : [1920, 1080];
-  // Preserve every generated pixel; contain with neutral margins rather than crop brand content.
-  const bytes = await sharp(result.bytes, { limitInputPixels: 40_000_000 })
-    .rotate()
-    .resize(width, height, { fit: 'contain', background: '#ffffff' })
-    .png()
-    .toBuffer();
+  // Preserve the authentic original image directly from the AI model
+  const originalPath = `workspace/${job.workspace_id}/content/${job.id}/${variant.id}-${position}-original.png`;
+  checked(
+    await db.storage
+      .from('brand-assets')
+      .upload(originalPath, result.bytes, { contentType: result.mime || 'image/png', upsert: true }),
+  );
+  // Also save the display path pointing to the pristine generated image bytes
   const path = `workspace/${job.workspace_id}/content/${job.id}/${variant.id}-${position}.png`;
   checked(
     await db.storage
       .from('brand-assets')
-      .upload(path, bytes, { contentType: 'image/png', upsert: true }),
+      .upload(path, result.bytes, { contentType: result.mime || 'image/png', upsert: true }),
   );
   checked(
     await db.from('content_media').upsert(
@@ -150,6 +155,9 @@ export async function runPipeline(job: Job) {
       instruction: z.string().default(''),
       channels: z.array(channelSchema).min(1).optional(),
       image_count: z.number().int().min(0).max(20).optional(),
+      image_style: z.string().optional(),
+      is_carousel: z.boolean().optional(),
+      cta: z.string().optional(),
     })
     .parse(job.payload);
   const db = adminClient();
@@ -176,7 +184,7 @@ export async function runPipeline(job: Job) {
   );
   if (run.status === 'COMPLETED') return;
   const cache: Record<string, unknown> = run.checkpoint;
-  const ai = new AIService(job.workspace_id, job.id),
+  const ai = new AIService(job.workspace_id, job.id, agent.id),
     selected = input.channels || agent.channels,
     count = input.image_count ?? agent.image_count;
   async function stage(name: string) {
@@ -209,6 +217,9 @@ export async function runPipeline(job: Job) {
       agent,
       editorial_memory: memory,
       instruction: input.instruction,
+      image_style: input.image_style,
+      is_carousel: input.is_carousel,
+      cta: input.cta,
       content_language: agent.content_language,
     });
   await stage('RESEARCH');
@@ -248,7 +259,7 @@ export async function runPipeline(job: Job) {
       const strategy = await ai.text('orchestrator', strategySchema, {
         context: cache.context,
         sources: cache.sources,
-        task: 'Create one central strategy. Source references must be a subset of supplied source URLs; use an empty array when no research was performed.',
+        task: `Create one central strategy.${input.cta ? ` Align the call to action with: "${input.cta}".` : ''}${input.is_carousel ? ' Structure as a cohesive carousel storyline.' : ''} Source references must be a subset of supplied source URLs; use an empty array when no research was performed.`,
         topic,
       });
       const allowed = new Set((cache.sources as { url: string }[]).map((s) => s.url));
@@ -283,7 +294,7 @@ export async function runPipeline(job: Job) {
         ...channels[channel],
         override: agent.channel_settings[channel],
       })),
-      task: `Adapt this ONE strategy to exactly the selected channels. Return exactly ${count} image_prompts per variant. Caption must include its CTA and hashtags and fit the specified character limit (CRITICAL: channel 'x' has a strict limit of 280 characters, keep it punchy and short). Preserve visual continuity between carousel images.`,
+      task: `Adapt this ONE strategy to exactly the selected channels. Return exactly ${count} image_prompts per variant.${input.is_carousel ? ' This post is a CAROUSEL; develop an engaging sequential carousel narrative with strong visual progression across slides.' : ''}${input.cta ? ` Strictly include or align the Call to Action (CTA) with: "${input.cta}".` : ''}${input.image_style ? ` The visual style of all image prompts MUST strictly follow: "${input.image_style}".` : ''} Each image_prompt must describe a complete scene tailored specifically to the channel's aspect ratio (${selected.map((c) => `${c}: ${channels[c].ratio}`).join(', ')}). The background and environment must be full-bleed edge-to-edge covering 100% of the canvas with NO outer white border or letterboxing. CRITICAL COMPOSITION RULE: All typography, headlines, sub-headlines, logos, mascots, characters, dialogue bubbles, and CTA buttons must be placed inside the visual safe area (with at least 8% breathing room from all outer edges) so that NO text, characters, or logos are cut off, clipped, or touching any of the canvas borders. Caption must include its CTA and hashtags and fit the specified character limit (CRITICAL: channel 'x' has a strict limit of 280 characters, keep it punchy and short). Preserve visual continuity between carousel images.`,
     });
     raw.variants = raw.variants.map((v) => ({
       ...v,
@@ -304,7 +315,13 @@ export async function runPipeline(job: Job) {
       a: agent.id,
       j: job.id,
       token: job.lock_token,
-      s: strategy,
+      s: {
+        ...strategy,
+        instruction: input.instruction || (job.payload as Record<string, unknown>)?.instruction || '',
+        image_style: input.image_style || (job.payload as Record<string, unknown>)?.image_style || '',
+        is_carousel: input.is_carousel ?? (job.payload as Record<string, unknown>)?.is_carousel ?? false,
+        cta: input.cta || (job.payload as Record<string, unknown>)?.cta || strategy.cta || '',
+      },
       variants,
       approval: agent.approval_required,
     }),
@@ -429,6 +446,7 @@ export async function regenerate(job: Job) {
       .from('content_items')
       .select('strategy,status')
       .eq('id', content_id)
+      .eq('agent_id', agent_id)
       .eq('workspace_id', job.workspace_id)
       .single(),
   );
@@ -451,7 +469,7 @@ export async function regenerate(job: Job) {
       .single(),
   );
   if (job.type === 'regenerate_copy') {
-    const result = await new AIService(job.workspace_id, job.id).text(
+    const result = await new AIService(job.workspace_id, job.id, agent.id).text(
       'text',
       z.object({ caption: z.string().min(1) }),
       {

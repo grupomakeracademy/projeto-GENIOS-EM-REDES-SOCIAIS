@@ -1,5 +1,7 @@
 import { z } from 'zod';
-import { agentSchema } from '@/lib/domain';
+import { agentSchema, configSchema } from '@/lib/domain';
+import { newAgentBriefing } from '@/features/agents/new-schema';
+import { requireAgent } from '@/lib/security/agent';
 import { guard, checked, fail, AppError } from '@/lib/security/context';
 import { adminClient } from '@/lib/supabase/server';
 import { nextOccurrence } from '@/lib/jobs/scheduling';
@@ -25,13 +27,47 @@ export async function POST(request: Request) {
   try {
     const ctx = await guard(request, 'write'),
       raw = await request.json();
+    if (raw.action === 'create_with_briefing') {
+      const draft = newAgentBriefing.parse(raw.draft);
+      const next = nextOccurrence(draft.local_time, draft.weekdays, draft.timezone);
+      const id = checked(
+        await adminClient().rpc('create_configured_agent', {
+          w: ctx.workspaceId,
+          actor_id: ctx.user.id,
+          p: {
+            name: draft.agentName,
+            briefing: draft,
+            text_settings: { instructions: draft.communication },
+            visual_settings: { instructions: draft.visual, reference_ids: [] },
+            channels: draft.channels,
+            content_language: 'pt-BR',
+            mode: 'ASSISTED',
+            approval_required: draft.approval_required,
+            image_count: 1,
+          },
+          s: {
+            enabled: draft.enabled,
+            timezone: draft.timezone,
+            local_time: draft.local_time,
+            weekdays: draft.weekdays,
+            next_run_at: next.toISOString(),
+          },
+        }),
+      );
+      return Response.json({ id }, { status: 201 });
+    }
     if (raw.action === 'magic') {
+      await requireAgent(ctx, z.uuid().parse(raw.id));
       const { instructions } = z.object({ instructions: z.string().min(3).max(10000) }).parse(raw);
       return Response.json(
-        await new AIService(ctx.workspaceId).text('text', z.object({ suggestion: z.string() }), {
-          task: 'Improve these brand writing instructions, preserve intent. Never apply automatically.',
-          instructions,
-        }),
+        await new AIService(ctx.workspaceId, undefined, raw.id).text(
+          'text',
+          z.object({ suggestion: z.string() }),
+          {
+            task: 'Improve these brand writing instructions, preserve intent. Never apply automatically.',
+            instructions,
+          },
+        ),
       );
     }
     if (raw.action === 'schedule') {
@@ -72,6 +108,33 @@ export async function POST(request: Request) {
     }
     const input = agentSchema.parse(raw),
       id = raw.id ? z.uuid().parse(raw.id) : undefined;
+    if (!id) throw new AppError('invalid_input');
+    await requireAgent(ctx, id);
+    if (input.text_settings.ai_configs !== undefined) {
+      const overrides = z
+        .record(
+          z.enum(['orchestrator', 'text', 'image', 'embedding']),
+          z.object({ provider: z.string(), model: z.string() }),
+        )
+        .parse(input.text_settings.ai_configs);
+      for (const [purpose, config] of Object.entries(overrides))
+        configSchema.parse({ ...config, purpose });
+    }
+    const references = z
+      .array(z.uuid())
+      .max(100)
+      .parse(input.visual_settings.reference_ids || []);
+    if (references.length) {
+      const assets =
+        checked(
+          await ctx.db
+            .from('assets')
+            .select('id')
+            .eq('workspace_id', ctx.workspaceId)
+            .in('id', references),
+        ) || [];
+      if (assets.length !== new Set(references).size) throw new AppError('forbidden', 403);
+    }
     const data = id
       ? checked(
           await ctx.db

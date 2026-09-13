@@ -4,16 +4,19 @@ import { useRouter } from 'next/navigation';
 import { File, Upload } from 'lucide-react';
 import { Card, Button, Field, Empty, Modal, Notice, useT, useAction, api } from '@/components/ui';
 import type { Asset } from '@/lib/domain';
+import { AssetAgents, type AssetAgent } from './agent-assets';
 export function Library({
   items,
   canEdit,
   total,
   page,
+  agents,
 }: {
   items: Asset[];
   canEdit: boolean;
   total: number;
   page: number;
+  agents: AssetAgent[];
 }) {
   const t = useT(),
     action = useAction(),
@@ -78,6 +81,7 @@ export function Library({
               <small>
                 {asset.category} · {Math.ceil(asset.size / 1024)} KB
               </small>
+              <AssetAgents assetId={asset.id} agents={agents} canEdit={canEdit} />
               <div className="form-row" style={{ marginTop: 15 }}>
                 <a className="button secondary" href={`/api/download?id=${asset.id}`}>
                   {t('download')}

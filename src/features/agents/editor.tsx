@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { AgentModels } from './models';
 import { Bot, Plus, Play, List, LayoutGrid, Check } from 'lucide-react';
 import { Button, Card, Field, Notice, Empty, useT, useAction, api } from '@/components/ui';
 import { channels, type Agent, type Asset, type Channel } from '@/lib/domain';
@@ -81,13 +82,16 @@ export function AgentEditor({
   const t = useT(),
     locale = useLocale(),
     router = useRouter(),
+    params = useSearchParams(),
     action = useAction(),
-    [selected, setSelected] = useState<Agent | null>(agents[0] || null),
+    [selected, setSelected] = useState<Agent | null>(
+      agents.find((a) => a.id === params.get('agent')) || agents[0] || null,
+    ),
     [tab, setTab] = useState('briefing'),
     [suggestion, setSuggestion] = useState(''),
     [refView, setRefView] = useState<'list' | 'thumbnails'>('list');
   const [schedule, setSchedule] = useState<Record<string, unknown>>(
-    schedules.find((s) => s.agent_id === agents[0]?.id) || {
+    schedules.find((s) => s.agent_id === selected?.id) || {
       enabled: false,
       timezone: 'America/Sao_Paulo',
       local_time: '08:00',
@@ -95,7 +99,10 @@ export function AgentEditor({
     },
   );
   function choose(agent: Agent) {
+    if (!agent) return;
+    router.replace(`/agents?agent=${agent.id}`, { scroll: false });
     setSelected(agent);
+    setSuggestion('');
     setSchedule(
       schedules.find((s) => s.agent_id === agent.id) || {
         enabled: false,
@@ -105,23 +112,7 @@ export function AgentEditor({
       },
     );
   }
-  const createAgent = () =>
-    setSelected({
-      id: '',
-      workspace_id: '',
-      name: '',
-      briefing: {},
-      text_settings: {},
-      visual_settings: {},
-      channel_settings: {},
-      channels: ['instagram'],
-      content_language: 'pt-BR',
-      mode: 'ASSISTED',
-      approval_required: true,
-      research_enabled: false,
-      image_count: 1,
-      active: true,
-    });
+  const createAgent = () => router.push('/agents/new');
   function groupFields(group: 'briefing' | 'text_settings', fields: typeof briefingFields) {
     return Object.entries(fields).map(([key, label]) => (
       <Field key={key} label={label[locale === 'en-US' ? 1 : locale === 'es-ES' ? 2 : 0]}>
@@ -147,7 +138,9 @@ export function AgentEditor({
           value={selected?.id || ''}
           onChange={(e) => choose(agents.find((a) => a.id === e.target.value)!)}
         >
-          <option value="">{t('agentName')}</option>
+          <option value="" disabled>
+            {t('agentName')}
+          </option>
           {agents.map((a) => (
             <option key={a.id} value={a.id}>
               {a.name}
@@ -157,7 +150,7 @@ export function AgentEditor({
         {canEdit ? (
           <Button secondary onClick={createAgent}>
             <Plus size={17} />
-            {t('agentName')}
+            Novo Agente
           </Button>
         ) : null}
         {selected?.id && canEdit ? (
@@ -189,7 +182,7 @@ export function AgentEditor({
       ) : (
         <>
           <div className="tabs" role="tablist">
-            {['briefing', 'text', 'visual', 'channels', 'routine', 'memory'].map((s) => (
+            {['briefing', 'text', 'visual', 'channels', 'routine', 'memory', 'IA'].map((s) => (
               <button
                 role="tab"
                 aria-selected={tab === s}
@@ -202,6 +195,9 @@ export function AgentEditor({
             ))}
           </div>
           <Card>
+            {tab === 'IA' && (
+              <AgentModels agent={selected} onChange={setSelected} disabled={!canEdit} />
+            )}
             <Field label={t('agentName')}>
               <input
                 disabled={!canEdit}
@@ -223,6 +219,7 @@ export function AgentEditor({
                       action.act(async () => {
                         const result = await api('agents', 'POST', {
                           action: 'magic',
+                          id: selected.id,
                           instructions: String(selected.text_settings.instructions || ''),
                         });
                         setSuggestion(result.suggestion);
@@ -297,7 +294,8 @@ export function AgentEditor({
                               (selected.visual_settings.reference_ids || []) as string[]
                             ).includes(a.id)}
                             onChange={(e) => {
-                              const ids = (selected.visual_settings.reference_ids || []) as string[];
+                              const ids = (selected.visual_settings.reference_ids ||
+                                []) as string[];
                               setSelected({
                                 ...selected,
                                 visual_settings: {
@@ -327,7 +325,8 @@ export function AgentEditor({
                             className={`ref-thumb-card${isSelected ? ' selected' : ''}`}
                             onClick={() => {
                               if (!canEdit) return;
-                              const ids = (selected.visual_settings.reference_ids || []) as string[];
+                              const ids = (selected.visual_settings.reference_ids ||
+                                []) as string[];
                               setSelected({
                                 ...selected,
                                 visual_settings: {

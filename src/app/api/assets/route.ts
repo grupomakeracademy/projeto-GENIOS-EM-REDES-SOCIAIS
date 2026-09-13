@@ -63,13 +63,26 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const ctx = await guard(request, 'write');
+    const raw = await request.json();
+    if (raw.action === 'associate') {
+      const input = z.object({ id: z.uuid(), agent_ids: z.array(z.uuid()).max(100) }).parse(raw);
+      checked(
+        await adminClient().rpc('set_asset_agents', {
+          w: ctx.workspaceId,
+          actor_id: ctx.user.id,
+          asset: input.id,
+          agents: input.agent_ids,
+        }),
+      );
+      return Response.json({ ok: true });
+    }
     const { id, ...input } = z
       .object({
         id: z.uuid(),
         name: z.string().min(1).max(160),
         category: z.string().min(1).max(80),
       })
-      .parse(await request.json());
+      .parse(raw);
     checked(
       await ctx.db
         .from('assets')

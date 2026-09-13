@@ -3,30 +3,47 @@ import { guard, checked, fail, AppError } from '@/lib/security/context';
 import { adminClient } from '@/lib/supabase/server';
 import { channelSchema } from '@/lib/domain';
 import { AIService, credential } from '@/lib/ai/service';
+import { executionResponsibles } from '@/features/content/responsibles';
+import { requireAgent } from '@/lib/security/agent';
 export async function GET(request: Request) {
   try {
     const ctx = await guard(request);
+    const agentId=await requireAgent(ctx,new URL(request.url).searchParams.get('agent'));
     const jobs = checked(
       await ctx.db
         .from('background_jobs')
         .select('id,status,payload,last_error,scheduled_at,agent_runs(stage,content_id)')
         .eq('workspace_id', ctx.workspaceId)
+        .filter(agentId?'payload->>agent_id':'workspace_id','eq',agentId||ctx.workspaceId)
         .eq('type', 'agent_run')
+        .is('payload->>deleted', null)
         .in('status', ['PENDING', 'RUNNING', 'FAILED'])
         .order('scheduled_at', { ascending: false })
         .limit(100),
+    );
+    const people = await executionResponsibles(
+      ctx.workspaceId,
+      (jobs || []).map((j) => String(j.payload.created_by || '')),
     );
     return Response.json(
       {
         items: (jobs || []).map((job) => ({
           id: job.id,
           status: job.status,
+          responsibles: people.has(job.payload.created_by)
+            ? [people.get(job.payload.created_by)]
+            : [],
+          scheduledAt: job.scheduled_at,
           agentId: job.payload.agent_id,
           instruction: String(job.payload.instruction || '').slice(0, 240),
           channels: job.payload.channels || [],
           error: job.last_error,
-          stage: job.agent_runs?.[0]?.stage || 'LOAD_CONTEXT',
-          contentId: job.agent_runs?.[0]?.content_id || null,
+          stage:
+            (Array.isArray(job.agent_runs) ? job.agent_runs[0] : job.agent_runs)?.stage ||
+            'LOAD_CONTEXT',
+          contentId:
+            (Array.isArray(job.agent_runs) ? job.agent_runs[0] : job.agent_runs)?.content_id ||
+            null,
         })),
       },
       { headers: { 'Cache-Control': 'private, no-store' } },
@@ -84,6 +101,9 @@ export async function POST(request: Request) {
         instruction: z.string().max(10000).default(''),
         channels: z.array(channelSchema).min(1),
         image_count: z.number().int().min(0).max(20),
+        image_style: z.string().max(120).optional(),
+        is_carousel: z.boolean().optional(),
+        cta: z.string().max(500).optional(),
         idempotency_key: z.uuid(),
       })
       .parse(await request.json());
@@ -96,7 +116,7 @@ export async function POST(request: Request) {
         .maybeSingle(),
     );
     if (!agent) throw new AppError('forbidden', 403);
-    const ai = new AIService(ctx.workspaceId);
+    const ai = new AIService(ctx.workspaceId, undefined, input.agent_id);
     for (const purpose of [
       'orchestrator',
       'text',

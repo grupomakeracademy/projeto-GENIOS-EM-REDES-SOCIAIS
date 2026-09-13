@@ -11,10 +11,23 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ p
     .order('created_at', { ascending: false })
     .range((page - 1) * 24, page * 24 - 1);
   const items = checked(result) as Asset[];
+  const agents =
+    checked(
+      await ctx.db
+        .from('agents')
+        .select('id,name,visual_settings')
+        .eq('workspace_id', ctx.workspaceId),
+    ) || [];
   for (const asset of items)
     asset.url = (await ctx.db.storage.from('brand-assets').createSignedUrl(asset.storage_path, 900))
       .data?.signedUrl;
   return (
-    <Library items={items} page={page} total={result.count || 0} canEdit={ctx.role !== 'VIEWER'} />
+    <Library
+      agents={agents}
+      items={items}
+      page={page}
+      total={result.count || 0}
+      canEdit={ctx.role !== 'VIEWER'}
+    />
   );
 }

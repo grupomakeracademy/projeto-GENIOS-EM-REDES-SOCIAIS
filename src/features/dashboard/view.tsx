@@ -6,24 +6,31 @@ import {
   CalendarDays,
   Clock,
   Bot,
-  TrendingUp,
   Info,
-  CheckCircle2,
 } from 'lucide-react';
 import { Card, Empty, StatusBadge, useT, useLocale } from '@/components/ui';
 import { SocialLogo } from '@/components/social-logos';
-import { channels, type Channel } from '@/lib/domain';
+import { type Channel } from '@/lib/domain';
 
 export function Dashboard({
   name,
   counts,
   recent,
   agents,
-  runs,
+  upcoming,
+  agentId,
 }: {
   name: string;
+  agentId: string;
+  upcoming: { id: string; topic: string; scheduled_at: string | null }[];
   counts: number[];
-  recent: { id: string; topic: string; status: string; created_at: string }[];
+  recent: {
+    id: string;
+    topic: string;
+    status: string;
+    created_at: string;
+    content_variants?: { channel: Channel }[];
+  }[];
   agents: number;
   runs: { id: string; stage: string; status: string; error_code: string | null }[];
 }) {
@@ -66,15 +73,6 @@ export function Dashboard({
     },
   ];
 
-  const chartChannels: { id: Channel; name: string; alcance: number; engajamento: number; seguidores: number }[] = [
-    { id: 'instagram', name: 'Instagram', alcance: 38, engajamento: 8, seguidores: 20 },
-    { id: 'facebook', name: 'Facebook', alcance: 26, engajamento: 7, seguidores: 15 },
-    { id: 'whatsapp', name: 'WhatsApp', alcance: 16, engajamento: 5, seguidores: 8 },
-    { id: 'tiktok', name: 'TikTok', alcance: 26, engajamento: 9, seguidores: 15 },
-    { id: 'x', name: 'X', alcance: 12, engajamento: 4, seguidores: 7 },
-    { id: 'linkedin', name: 'LinkedIn', alcance: 22, engajamento: 7, seguidores: 12 },
-  ];
-
   return (
     <div className="dashboard-container">
       {/* Top Welcome Header */}
@@ -95,19 +93,17 @@ export function Dashboard({
           const Icon = cfg.icon;
           return (
             <Card className="dash-stat-card" key={i}>
-              <div className="dash-stat-icon-container" style={{ background: cfg.bg, color: cfg.color }}>
+              <div
+                className="dash-stat-icon-container"
+                style={{ background: cfg.bg, color: cfg.color }}
+              >
                 <Icon size={24} />
               </div>
               <div className="dash-stat-body">
                 <span className="dash-stat-label">{cfg.label}</span>
-                <strong className="dash-stat-number">{counts[i]?.toLocaleString(locale) ?? 0}</strong>
-                <div className="dash-stat-trend">
-                  <span className="dash-stat-badge">
-                    <TrendingUp size={12} />
-                    {cfg.trend}
-                  </span>
-                  <span className="dash-stat-subtext">{t('relativeToLastMonth')}</span>
-                </div>
+                <strong className="dash-stat-number">
+                  {counts[i]?.toLocaleString(locale) ?? 0}
+                </strong>
               </div>
             </Card>
           );
@@ -121,7 +117,10 @@ export function Dashboard({
           <div className="dash-card-header">
             <div className="dash-chart-title">
               <h2>{t('performance')}</h2>
-              <span className="dash-info-badge" title="Métricas consolidadas de alcance, engajamento e público">
+              <span
+                className="dash-info-badge"
+                title="Métricas consolidadas de alcance, engajamento e público"
+              >
                 <Info size={14} />
               </span>
             </div>
@@ -141,74 +140,25 @@ export function Dashboard({
             </div>
           </div>
 
-          <div className="dash-chart-wrapper">
-            {/* Y Axis Grid lines */}
-            <div className="dash-chart-y-axis">
-              <span>50K</span>
-              <span>40K</span>
-              <span>30K</span>
-              <span>20K</span>
-              <span>10K</span>
-              <span>0</span>
-            </div>
-            <div className="dash-chart-bars-area">
-              <div className="dash-grid-lines">
-                <div className="grid-line" />
-                <div className="grid-line" />
-                <div className="grid-line" />
-                <div className="grid-line" />
-                <div className="grid-line" />
-                <div className="grid-line" />
-              </div>
-
-              {/* Grouped Bars per Network */}
-              <div className="dash-bars-columns">
-                {chartChannels.map((item) => (
-                  <div key={item.id} className="dash-bar-group">
-                    <div className="dash-bars-container">
-                      <div
-                        className="bar bar-blue"
-                        style={{ height: `${(item.alcance / 50) * 100}%` }}
-                        title={`${t('reach')}: ${item.alcance}k`}
-                      />
-                      <div
-                        className="bar bar-green"
-                        style={{ height: `${(item.engajamento / 50) * 100}%` }}
-                        title={`${t('engagement')}: ${item.engajamento}k`}
-                      />
-                      <div
-                        className="bar bar-purple"
-                        style={{ height: `${(item.seguidores / 50) * 100}%` }}
-                        title={`${t('followers')}: ${item.seguidores}k`}
-                      />
-                    </div>
-                    <div className="dash-channel-footer">
-                      <div className="dash-channel-logo">
-                        <SocialLogo channel={item.id} size={22} />
-                      </div>
-                      <span className="dash-channel-name">{item.name}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+          <Empty title="Métricas de alcance, engajamento e seguidores ainda não disponíveis para as contas selecionadas." />
         </Card>
 
         {/* Recent Contents Card */}
         <Card className="dash-recent-card">
           <div className="dash-card-header">
             <h2>{t('recent')}</h2>
-            <Link href="/contents" className="dash-view-all-link">
+            <Link
+              href={agentId ? `/contents?agent=${agentId}` : '/contents'}
+              className="dash-view-all-link"
+            >
               {t('viewAll')}
             </Link>
           </div>
 
           {recent.length ? (
             <div className="dash-recent-list">
-              {recent.map((c, idx) => {
-                const channelKeys = Object.keys(channels) as Channel[];
-                const assignedChannel = channelKeys[idx % channelKeys.length];
+              {recent.map((c) => {
+                const assignedChannel = c.content_variants?.[0]?.channel;
                 return (
                   <div key={c.id} className="dash-recent-item">
                     <div className="dash-recent-thumb-wrapper">
@@ -216,7 +166,7 @@ export function Dashboard({
                         <FileText size={18} color="#64748b" />
                       </div>
                       <span className="dash-recent-logo-badge">
-                        <SocialLogo channel={assignedChannel} size={14} />
+                        {assignedChannel && <SocialLogo channel={assignedChannel} size={14} />}
                       </span>
                     </div>
                     <div className="dash-recent-text">
@@ -241,7 +191,10 @@ export function Dashboard({
           ) : (
             <div style={{ padding: '24px 0' }}>
               <Empty title={t('emptyContent')}>
-                <Link className="button secondary" href="/agents">
+                <Link
+                  className="button secondary"
+                  href={agentId ? `/agents?agent=${agentId}` : '/agents'}
+                >
                   {t('configureGenie')}
                 </Link>
               </Empty>
@@ -256,7 +209,10 @@ export function Dashboard({
         <Card className="dash-bottom-card">
           <div className="dash-bottom-header">
             <div className="dash-bottom-icon-title">
-              <div className="dash-bottom-icon-box" style={{ background: '#eff6ff', color: '#2563eb' }}>
+              <div
+                className="dash-bottom-icon-box"
+                style={{ background: '#eff6ff', color: '#2563eb' }}
+              >
                 <Bot size={22} />
               </div>
               <div>
@@ -270,59 +226,46 @@ export function Dashboard({
               {t('manageAgents')}
             </Link>
           </div>
-          <div className="dash-agents-logos">
-            {Object.keys(channels).map((ch) => (
-              <div key={ch} className="dash-network-mini-badge" title={channels[ch as Channel]?.name}>
-                <SocialLogo channel={ch} size={18} />
-              </div>
-            ))}
-          </div>
         </Card>
 
         {/* Upcoming Content */}
         <Card className="dash-bottom-card">
           <div className="dash-bottom-header">
             <div className="dash-bottom-icon-title">
-              <div className="dash-bottom-icon-box" style={{ background: '#ecfdf5', color: '#10b981' }}>
+              <div
+                className="dash-bottom-icon-box"
+                style={{ background: '#ecfdf5', color: '#10b981' }}
+              >
                 <CalendarDays size={22} />
               </div>
               <div>
                 <h3>{t('upcoming')}</h3>
                 <p className="dash-bottom-meta">
-                  <strong>{counts[2] || 0}</strong> {t('scheduledForThisWeek')}
+                  <strong>{counts[2] || 0}</strong> {t('scheduled')}
                 </p>
               </div>
             </div>
-            <Link href="/calendar" className="dash-action-btn">
+            <Link
+              href={agentId ? `/calendar?agent=${agentId}` : '/calendar'}
+              className="dash-action-btn"
+            >
               {t('viewCalendar')}
             </Link>
           </div>
         </Card>
 
-        {/* Briefing Status */}
-        <Card className="dash-bottom-card">
-          <div className="dash-bottom-header">
-            <div className="dash-bottom-icon-title">
-              <div className="dash-bottom-icon-box" style={{ background: '#f5f3ff', color: '#8b5cf6' }}>
-                <FileText size={22} />
-              </div>
-              <div>
-                <h3>{t('history')}</h3>
-                <div className="dash-briefing-status">
-                  <CheckCircle2 size={16} color="#10b981" />
-                  <span>{t('briefingConfigured')}</span>
-                </div>
-                <p className="dash-bottom-meta" style={{ fontSize: '0.75rem', marginTop: 2 }}>
-                  {runs.length
-                    ? `${t('lastUpdate')} ${new Date().toLocaleDateString(locale)}`
-                    : `${t('lastUpdate')} ${new Date().toLocaleDateString(locale)}`}
-                </p>
-              </div>
-            </div>
-            <Link href="/agents" className="dash-action-btn">
-              {t('editBriefing')}
-            </Link>
-          </div>
+        <Card>
+          <h3>Próximos conteúdos</h3>
+          {upcoming.map((c) => (
+            <p key={c.id}>
+              <Link href={`/contents/${c.id}`}>{c.topic}</Link>
+              <small>
+                {' '}
+                · {c.scheduled_at ? new Date(c.scheduled_at).toLocaleString(locale) : ''}
+              </small>
+            </p>
+          ))}
+          {!upcoming.length && <p className="muted">Nenhum conteúdo agendado.</p>}
         </Card>
       </div>
     </div>

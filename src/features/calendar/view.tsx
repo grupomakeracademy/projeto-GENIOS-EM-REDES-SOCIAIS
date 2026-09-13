@@ -12,11 +12,11 @@ import {
   Clock,
   FileText,
 } from 'lucide-react';
-import { Button, Card, Empty, StatusBadge, useT, useLocale } from '@/components/ui';
+import { Button, Card, Empty, StatusBadge, useT, useLocale, Modal, Field } from '@/components/ui';
 import { SocialLogo } from '@/components/social-logos';
-import { channels, type Channel } from '@/lib/domain';
+import { channels, statuses, type Channel } from '@/lib/domain';
 
-type CalendarContentItem = {
+export type CalendarContentItem = {
   id: string;
   topic: string;
   status: string;
@@ -52,6 +52,7 @@ export function Calendar({
     router = useRouter(),
     params = useSearchParams(),
     [view, setView] = useState('month');
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const selected = DateTime.fromISO(date, { zone: timezone }).setLocale(locale);
   const start = selected.startOf(view === 'month' ? 'month' : view === 'week' ? 'week' : 'day');
@@ -89,6 +90,66 @@ export function Calendar({
 
   return (
     <div className="cal-screen-wrapper">
+      {filtersOpen && (
+        <Modal title="Filtros do calendário" onClose={() => setFiltersOpen(false)}>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const form = new FormData(e.currentTarget),
+                p = new URLSearchParams(params);
+              const status = form.getAll('status').join(',');
+              if (status) p.set('status', status);
+              else p.delete('status');
+              const network = String(form.get('network') || '');
+              if (network) p.set('network', network);
+              else p.delete('network');
+              router.push(`/calendar?${p}`, { scroll: false });
+              setFiltersOpen(false);
+            }}
+          >
+            <Field label="Rede social">
+              <select name="network" defaultValue={params.get('network') || ''}>
+                <option value="">Todas as redes</option>
+                {Object.entries(channels).map(([id, c]) => (
+                  <option key={id} value={id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <p>Status</p>
+            <div className="grid two">
+              {statuses.map((s) => (
+                <label className="check" key={s}>
+                  <input
+                    type="checkbox"
+                    name="status"
+                    value={s}
+                    defaultChecked={(params.get('status') || '').split(',').includes(s)}
+                  />
+                  {t(s)}
+                </label>
+              ))}
+            </div>
+            <div className="form-row">
+              <Button type="submit">Aplicar filtros</Button>
+              <Button
+                secondary
+                type="button"
+                onClick={() => {
+                  const p = new URLSearchParams(params);
+                  p.delete('status');
+                  p.delete('network');
+                  router.push(`/calendar?${p}`);
+                  setFiltersOpen(false);
+                }}
+              >
+                Limpar filtros
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
       {/* Page Heading */}
       <div className="page-heading cal-header">
         <h1>{t('calendar')}</h1>
@@ -109,7 +170,14 @@ export function Calendar({
                 <ChevronRight size={18} />
               </Button>
               <h2 className="cal-month-title">{selected.toFormat('LLLL de yyyy')}</h2>
-              <Button secondary onClick={() => router.push('/calendar')}>
+              <Button
+                secondary
+                onClick={() => {
+                  const p = new URLSearchParams(params);
+                  p.delete('date');
+                  router.push(`/calendar?${p}`);
+                }}
+              >
                 {t('today')}
               </Button>
             </div>
@@ -117,16 +185,12 @@ export function Calendar({
             <div className="cal-view-controls">
               <div className="tabs cal-tabs">
                 {['month', 'week', 'day', 'list'].map((s) => (
-                  <button
-                    className={view === s ? 'active' : ''}
-                    key={s}
-                    onClick={() => setView(s)}
-                  >
+                  <button className={view === s ? 'active' : ''} key={s} onClick={() => setView(s)}>
                     {t(s)}
                   </button>
                 ))}
               </div>
-              <Button secondary className="cal-filter-btn" onClick={() => router.push('/contents')}>
+              <Button secondary className="cal-filter-btn" onClick={() => setFiltersOpen(true)}>
                 <Filter size={15} />
                 <span>Filtros</span>
               </Button>
@@ -154,7 +218,7 @@ export function Calendar({
                               .toLocaleString(DateTime.DATETIME_MED)
                           : '—'}
                       </small>
-                      <StatusBadge status={item.status as any} />
+                  <StatusBadge status={item.status} />
                     </div>
                   );
                 })
@@ -222,7 +286,9 @@ export function Calendar({
                                   <SocialLogo channel={ch} size={14} />
                                 </div>
                                 <div className="cal-pill-content">
-                                  {timeStr ? <span className="cal-pill-time">{timeStr}</span> : null}
+                                  {timeStr ? (
+                                    <span className="cal-pill-time">{timeStr}</span>
+                                  ) : null}
                                   <span className="cal-pill-title">{c.topic}</span>
                                 </div>
                               </Link>
@@ -288,11 +354,7 @@ export function Calendar({
                         </Link>
                       </div>
                       <div className="cal-upcoming-badge">
-                        <span className="cal-agendado-pill">
-                          {item.status === 'PUBLISHED'
-                            ? t('publishedBadge')
-                            : t('scheduledBadge')}
-                        </span>
+                        <StatusBadge status={item.status} />
                       </div>
                     </div>
                   );
@@ -316,7 +378,10 @@ export function Calendar({
             <div className="cal-summary-grid">
               {/* Agendados */}
               <div className="cal-summary-box">
-                <div className="cal-summary-icon" style={{ background: '#eff6ff', color: '#2563eb' }}>
+                <div
+                  className="cal-summary-icon"
+                  style={{ background: '#eff6ff', color: '#2563eb' }}
+                >
                   <CalendarDays size={20} />
                 </div>
                 <div className="cal-summary-data">
@@ -327,7 +392,10 @@ export function Calendar({
 
               {/* Publicados */}
               <div className="cal-summary-box">
-                <div className="cal-summary-icon" style={{ background: '#ecfdf5', color: '#10b981' }}>
+                <div
+                  className="cal-summary-icon"
+                  style={{ background: '#ecfdf5', color: '#10b981' }}
+                >
                   <CheckCircle2 size={20} />
                 </div>
                 <div className="cal-summary-data">
@@ -338,7 +406,10 @@ export function Calendar({
 
               {/* Em revisão */}
               <div className="cal-summary-box">
-                <div className="cal-summary-icon" style={{ background: '#fffbeb', color: '#d97706' }}>
+                <div
+                  className="cal-summary-icon"
+                  style={{ background: '#fffbeb', color: '#d97706' }}
+                >
                   <Clock size={20} />
                 </div>
                 <div className="cal-summary-data">
@@ -349,7 +420,10 @@ export function Calendar({
 
               {/* Rascunhos */}
               <div className="cal-summary-box">
-                <div className="cal-summary-icon" style={{ background: '#f5f3ff', color: '#8b5cf6' }}>
+                <div
+                  className="cal-summary-icon"
+                  style={{ background: '#f5f3ff', color: '#8b5cf6' }}
+                >
                   <FileText size={20} />
                 </div>
                 <div className="cal-summary-data">

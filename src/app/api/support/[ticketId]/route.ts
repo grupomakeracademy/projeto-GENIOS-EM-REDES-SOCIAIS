@@ -24,7 +24,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ tick
         .order('created_at'),
       ctx.db
         .from('support_attachments')
-        .select('id,original_name,size,message_id')
+        .select('id,original_name,size,message_id,mime_type')
         .eq('ticket_id', ticketId)
         .eq('workspace_id', ctx.workspaceId),
       ctx.db

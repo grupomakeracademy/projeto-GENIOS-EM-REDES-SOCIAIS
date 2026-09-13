@@ -59,6 +59,12 @@ export async function tick() {
     );
     return { processed: true, id: job.id, status: 'COMPLETED' };
   } catch (error) {
+    // A deleted execution has revoked its lease and must not emit new failures.
+    try {
+      await renewLease(job);
+    } catch {
+      return { processed: false, id: job.id, status: 'LEASE_LOST' };
+    }
     console.error(`[Worker] Job ${job.id} (${job.type}) failed:`, error);
     const safe = [
       'provider_missing',
@@ -112,7 +118,11 @@ export async function tick() {
       checked(
         await db
           .from('notifications')
-          .insert({ workspace_id: job.workspace_id, message: code, href: '/contents?status=FAILED' }),
+          .insert({
+            workspace_id: job.workspace_id,
+            message: code,
+            href: '/contents?status=FAILED',
+          }),
       );
     }
     return { processed: true, id: job.id, status: retry ? 'RETRYING' : 'FAILED', error: code };

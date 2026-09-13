@@ -11,6 +11,7 @@ export function FilePicker({
   files: File[];
   setFiles: (files: File[]) => void;
 }) {
+  const [fileError, setFileError] = useState('');
   return (
     <div className="support-files">
       <Field label="Anexos (opcional)">
@@ -18,12 +19,24 @@ export function FilePicker({
           type="file"
           accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg,.webp,.csv,.xls,.xlsx,.mp3,.wav,.mp4"
           multiple
-          onChange={(e) => setFiles(Array.from(e.target.files || []))}
+          onChange={(e) => {
+            const selected = Array.from(e.target.files || []);
+            if (selected.length + files.length > 3) {
+              setFileError('Selecione no máximo 3 anexos por mensagem.');
+              e.target.value = '';
+              return;
+            }
+            setFileError('');
+            setFiles([...files, ...selected]);
+            e.target.value = '';
+          }}
         />
       </Field>
       <small className="muted">
-        Até 50 MB por arquivo. Documentos, planilhas, imagens, áudio e vídeo.
+        Máximo de 3 anexos por mensagem, até 50 MB por arquivo. Documentos, planilhas, imagens,
+        áudio e vídeo.
       </small>
+      <Notice message={fileError} error />
       {files.map((f, i) => (
         <div className="support-file-row" key={`${f.name}-${i}`}>
           <Paperclip size={14} />
@@ -48,6 +61,7 @@ export async function uploadFiles(
   files: File[],
   uploaded: (file: File) => void,
 ) {
+  if (files.length > 3) throw new Error('Selecione no máximo 3 anexos por mensagem.');
   for (const file of files) {
     const body = new FormData();
     body.set('file', file);

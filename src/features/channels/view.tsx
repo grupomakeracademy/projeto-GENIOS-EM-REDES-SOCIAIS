@@ -3,7 +3,17 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { Check, Link2, ExternalLink, Unlink, Plus, ShieldCheck } from 'lucide-react';
 import { channels, type Channel } from '@/lib/domain';
-import { Button, Card, Modal, Field, Notice, useT, useLocale, useAction, api } from '@/components/ui';
+import {
+  Button,
+  Card,
+  Modal,
+  Field,
+  Notice,
+  useT,
+  useLocale,
+  useAction,
+  api,
+} from '@/components/ui';
 
 const oauthInfo: Record<string, { platform: string; docsUrl: string; desc: string }> = {
   instagram: {
@@ -48,9 +58,13 @@ import { SocialLogo } from '@/components/social-logos';
 
 export function ChannelsView({
   initialConnections,
+  agentId,
+  agentName,
   canEdit = true,
 }: {
   initialConnections?: Record<Channel, ConnectionStatus>;
+  agentId: string;
+  agentName: string;
   canEdit?: boolean;
 }) {
   const t = useT();
@@ -78,10 +92,9 @@ export function ChannelsView({
 
   async function handleConnect(channel: Channel, isTest = false) {
     await action.act(async () => {
-      const handle = isTest
-        ? `@demo_${channel}`
-        : accountHandle.trim() || `@${channel}_oficial`;
+      const handle = isTest ? `@demo_${channel}` : accountHandle.trim() || `@${channel}_oficial`;
       const res = await api('channels', 'POST', {
+        agent_id: agentId,
         channel,
         action: 'connect',
         account_name: handle,
@@ -103,6 +116,7 @@ export function ChannelsView({
     if (!window.confirm(t('disconnectConfirm'))) return;
     await action.act(async () => {
       await api('channels', 'POST', {
+        agent_id: agentId,
         channel,
         action: 'disconnect',
       });
@@ -116,7 +130,7 @@ export function ChannelsView({
   return (
     <>
       <div className="page-heading">
-        <h1>{t('channels')}</h1>
+        <h2>{agentName}</h2>
         <p>{t('connectInfo')}</p>
       </div>
 
@@ -193,10 +207,7 @@ export function ChannelsView({
                   </>
                 ) : (
                   <>
-                    <Button
-                      disabled={!canEdit || action.busy}
-                      onClick={() => openConnectModal(ch)}
-                    >
+                    <Button disabled={!canEdit || action.busy} onClick={() => openConnectModal(ch)}>
                       <Link2 size={15} />
                       {t('connectAccount')}
                     </Button>
@@ -285,18 +296,11 @@ export function ChannelsView({
             </Field>
 
             <div style={{ display: 'flex', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
-              <Button
-                busy={action.busy}
-                onClick={() => handleConnect(activeModal, false)}
-              >
+              <Button busy={action.busy} onClick={() => handleConnect(activeModal, false)}>
                 <Link2 size={16} />
                 {t('connectAccount')}
               </Button>
-              <Button
-                secondary
-                busy={action.busy}
-                onClick={() => handleConnect(activeModal, true)}
-              >
+              <Button secondary busy={action.busy} onClick={() => handleConnect(activeModal, true)}>
                 {t('testConnection')}
               </Button>
             </div>

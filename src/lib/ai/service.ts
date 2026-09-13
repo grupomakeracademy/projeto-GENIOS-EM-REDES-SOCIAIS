@@ -15,8 +15,20 @@ export class AIService {
   constructor(
     private workspaceId: string,
     private jobId?: string,
+    private agentId?: string,
   ) {}
   async config(purpose: AIConfig['purpose']) {
+    if (this.agentId) {
+      const agent = await adminClient()
+        .from('agents')
+        .select('text_settings')
+        .eq('workspace_id', this.workspaceId)
+        .eq('id', this.agentId)
+        .single();
+      if (agent.error || !agent.data) throw new Error('invalid_input');
+      const override = agent.data.text_settings?.ai_configs?.[purpose];
+      if (override) return configSchema.parse({ ...override, purpose });
+    }
     const { data, error } = await adminClient()
       .from('ai_provider_configs')
       .select('purpose,provider,model,enabled')

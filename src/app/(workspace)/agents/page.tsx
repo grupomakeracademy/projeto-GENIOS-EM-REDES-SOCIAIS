@@ -1,8 +1,14 @@
 import { context, checked } from '@/lib/security/context';
 import { AgentEditor } from '@/features/agents/editor';
 import type { Agent, Asset } from '@/lib/domain';
-export default async function Page() {
+import { requireAgent } from '@/lib/security/agent';
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ agent?: string }>;
+}) {
   const ctx = await context();
+  await requireAgent(ctx, (await searchParams).agent);
   const [agents, assets, memories, schedules] = await Promise.all([
     ctx.db.from('agents').select('*').eq('workspace_id', ctx.workspaceId).limit(100),
     ctx.db.from('assets').select('*').eq('workspace_id', ctx.workspaceId).limit(100),

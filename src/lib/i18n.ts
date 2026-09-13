@@ -63,6 +63,12 @@ const messages = {
   agents: ['Agentes', 'Agents', 'Agentes'],
   channels: ['Canais', 'Channels', 'Canales'],
   library: ['Biblioteca', 'Library', 'Biblioteca'],
+  university: ['Universidade', 'University', 'Universidad'],
+  universitySubtitle: [
+    'Gerencie os vídeos de treinamento.',
+    'Manage training videos.',
+    'Gestiona los vídeos de formación.',
+  ],
   settings: ['Configurações', 'Settings', 'Configuración'],
   support: ['Suporte', 'Support', 'Soporte'],
   overview: [

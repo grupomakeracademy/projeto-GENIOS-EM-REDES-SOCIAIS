@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { canTransition, permitted, channels, validateVariants, fitCaptionToLimit } from '@/lib/domain';
+import {
+  canTransition,
+  permitted,
+  channels,
+  validateVariants,
+  fitCaptionToLimit,
+} from '@/lib/domain';
 import { nextOccurrence, backoff } from '@/lib/jobs/scheduling';
 import { encrypt, decrypt } from '@/lib/security/crypto';
 import { validateFile } from '@/lib/security/uploads';
@@ -33,6 +39,10 @@ describe('content lifecycle', () => {
     const variants = [
       {
         channel: 'x' as const,
+        title: 'Teste',
+        hashtags: [],
+        cta: '',
+        visual_concept: '',
         caption: 'Uma legenda com mais de 280 caracteres ' + 'x'.repeat(270) + ' #Hashtag',
         image_prompts: ['prompt 1'],
       },

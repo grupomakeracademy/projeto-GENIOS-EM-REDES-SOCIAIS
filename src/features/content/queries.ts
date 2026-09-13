@@ -1,15 +1,27 @@
 import 'server-only';
 import { context, checked } from '@/lib/security/context';
-import { statuses, type Content } from '@/lib/domain';
+import { channels, statuses, type Content } from '@/lib/domain';
+import { requireAgent } from '@/lib/security/agent';
+import { executionResponsibles } from './responsibles';
 export async function contentList(params: Record<string, string | undefined> = {}) {
   const ctx = await context();
+  await requireAgent(ctx, params.agent);
   const page = Math.max(1, Math.min(10000, Number(params.page) || 1));
   let query = ctx.db
     .from('content_items')
-    .select('*,content_variants(*,content_media(*))', { count: 'exact' })
+    .select(
+      params.network && params.network in channels
+        ? '*,content_variants!inner(*,content_media(*))'
+        : '*,content_variants(*,content_media(*))',
+      { count: 'exact' },
+    )
     .eq('workspace_id', ctx.workspaceId);
-  if (params.status && statuses.includes(params.status as (typeof statuses)[number]))
-    query = query.eq('status', params.status);
+  const selectedStatuses = (params.status || '')
+    .split(',')
+    .filter((s) => statuses.includes(s as (typeof statuses)[number]));
+  if (selectedStatuses.length) query = query.in('status', selectedStatuses);
+  if (params.network && params.network in channels)
+    query = query.eq('content_variants.channel', params.network);
   if (params.agent && /^[0-9a-f-]{36}$/i.test(params.agent))
     query = query.eq('agent_id', params.agent);
   if (params.q) query = query.ilike('topic', `%${params.q.replace(/[%_\\]/g, '').slice(0, 160)}%`);
@@ -22,6 +34,27 @@ export async function contentList(params: Record<string, string | undefined> = {
     .order('created_at', { ascending })
     .range((page - 1) * 12, page * 12 - 1);
   const items = checked(result) as Content[];
+  const jobs = items.length
+    ? checked(
+        await ctx.db
+          .from('background_jobs')
+          .select('id,payload')
+          .eq('workspace_id', ctx.workspaceId)
+          .in(
+            'id',
+            items.map((i) => i.id),
+          ),
+      ) || []
+    : [];
+  const creators = new Map(jobs.map((j) => [j.id, String(j.payload.created_by || '')]));
+  const people = await executionResponsibles(
+    ctx.workspaceId,
+    items.map((i) => i.created_by || creators.get(i.id) || ''),
+  );
+  for (const item of items) {
+    const person = people.get(item.created_by || creators.get(item.id) || '');
+    item.responsibles = person ? [person] : [];
+  }
   for (const item of items)
     for (const variant of item.content_variants)
       for (const media of variant.content_media) {

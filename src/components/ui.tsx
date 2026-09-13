@@ -92,10 +92,16 @@ export function Field({ label, children }: { label: string; children: ReactNode 
 }
 export function Modal({
   title,
+  subtitle,
+  icon,
+  className = '',
   children,
   onClose,
 }: {
   title: string;
+  subtitle?: string;
+  icon?: ReactNode;
+  className?: string;
   children: ReactNode;
   onClose: () => void;
 }) {
@@ -105,12 +111,16 @@ export function Modal({
       ref={(node) => {
         if (node && !node.open) node.showModal();
       }}
-      className="modal"
+      className={`modal ${className}`}
       onCancel={onClose}
     >
-      <header>
-        <h2>{title}</h2>
-        <button className="icon-button" onClick={onClose} aria-label={t('close')}>
+      <header className={icon || subtitle ? 'modal-header-rich' : ''}>
+        {icon && <div className="modal-header-icon">{icon}</div>}
+        <div className="modal-header-text">
+          <h2>{title}</h2>
+          {subtitle && <p className="modal-header-subtitle">{subtitle}</p>}
+        </div>
+        <button className="icon-button modal-close-btn" onClick={onClose} aria-label={t('close')}>
           <X />
         </button>
       </header>

@@ -33,6 +33,9 @@ export async function POST(
       Date.now() - Date.parse(message.created_at) > 30 * 60 * 1000
     )
       throw new AppError('forbidden', 403);
+    const existing=await ctx.db.from('support_attachments').select('id',{count:'exact',head:true}).eq('workspace_id',ctx.workspaceId).eq('message_id',messageId);
+    checked(existing);
+    if((existing.count||0)>=3)throw new AppError('Limite de 3 anexos por mensagem atingido.',400);
     const bytes = Buffer.from(await file.arrayBuffer()),
       validated = validateSupportFile(file.name, file.type, bytes);
     const db = adminClient(),
@@ -58,6 +61,7 @@ export async function POST(
       .single();
     if (saved.error) {
       await db.storage.from('support').remove([path]);
+      if(saved.error.message.includes('support_attachment_limit'))throw new AppError('Limite de 3 anexos por mensagem atingido.',400);
       throw new AppError('database_error', 503);
     }
     return Response.json(saved.data, { status: 201 });
