@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { guard, checked, fail, AppError } from '@/lib/security/context';
 import { adminClient } from '@/lib/supabase/server';
 import { channelSchema } from '@/lib/domain';
-import { AIService, credential } from '@/lib/ai/service';
+import { AIService } from '@/lib/ai/service';
 import { executionResponsibles } from '@/features/content/responsibles';
 import { requireAgent } from '@/lib/security/agent';
 export async function GET(request: Request) {
@@ -124,7 +124,7 @@ export async function POST(request: Request) {
       ...(input.image_count ? ['image'] : []),
     ] as const) {
       const config = await ai.config(purpose as 'orchestrator' | 'text' | 'embedding' | 'image');
-      await credential(ctx.workspaceId, config.provider);
+      await ai.key(config);
     }
     const db = adminClient(),
       key = `${ctx.workspaceId}:manual:${input.idempotency_key}`;

@@ -35,8 +35,7 @@ export async function apiJSON(
     throw new Error('timeout');
   }
   if (!response.ok) {
-    const errorBody = await response.text().catch(() => '');
-    console.error(`[AI Provider] ${method} ${url} status ${response.status}:`, errorBody);
+    console.error(`[AI Provider] ${method} status ${response.status}`);
     throw new Error(
       response.status === 429
         ? 'rate_limit'

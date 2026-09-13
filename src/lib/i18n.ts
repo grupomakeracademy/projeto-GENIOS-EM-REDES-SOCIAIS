@@ -251,7 +251,6 @@ const messages = {
   text: ['Texto', 'Text', 'Texto'],
   memory: ['Memória', 'Memory', 'Memoria'],
   instructions: ['Instruções', 'Instructions', 'Instrucciones'],
-  magic: ['Prompt Mágico', 'Magic prompt', 'Prompt Mágico'],
   apply: ['Aplicar sugestão', 'Apply suggestion', 'Aplicar sugerencia'],
   suggestion: [
     'Sugestão — revise antes de aplicar',

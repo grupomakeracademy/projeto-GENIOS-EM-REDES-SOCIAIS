@@ -1,11 +1,10 @@
 import { z } from 'zod';
-import { agentSchema, configSchema } from '@/lib/domain';
+import { agentSchema } from '@/lib/domain';
 import { newAgentBriefing } from '@/features/agents/new-schema';
 import { requireAgent } from '@/lib/security/agent';
 import { guard, checked, fail, AppError } from '@/lib/security/context';
 import { adminClient } from '@/lib/supabase/server';
 import { nextOccurrence } from '@/lib/jobs/scheduling';
-import { AIService } from '@/lib/ai/service';
 export async function GET(request: Request) {
   try {
     const ctx = await guard(request);
@@ -27,6 +26,10 @@ export async function POST(request: Request) {
   try {
     const ctx = await guard(request, 'write'),
       raw = await request.json();
+    if (raw.action && !['create_with_briefing', 'schedule'].includes(raw.action))
+      throw new AppError('invalid_input');
+    if (raw.text_settings && Object.hasOwn(raw.text_settings, 'ai_configs'))
+      throw new AppError('forbidden', 403);
     if (raw.action === 'create_with_briefing') {
       const draft = newAgentBriefing.parse(raw.draft);
       const next = nextOccurrence(draft.local_time, draft.weekdays, draft.timezone);
@@ -55,20 +58,6 @@ export async function POST(request: Request) {
         }),
       );
       return Response.json({ id }, { status: 201 });
-    }
-    if (raw.action === 'magic') {
-      await requireAgent(ctx, z.uuid().parse(raw.id));
-      const { instructions } = z.object({ instructions: z.string().min(3).max(10000) }).parse(raw);
-      return Response.json(
-        await new AIService(ctx.workspaceId, undefined, raw.id).text(
-          'text',
-          z.object({ suggestion: z.string() }),
-          {
-            task: 'Improve these brand writing instructions, preserve intent. Never apply automatically.',
-            instructions,
-          },
-        ),
-      );
     }
     if (raw.action === 'schedule') {
       const input = z
@@ -110,16 +99,16 @@ export async function POST(request: Request) {
       id = raw.id ? z.uuid().parse(raw.id) : undefined;
     if (!id) throw new AppError('invalid_input');
     await requireAgent(ctx, id);
-    if (input.text_settings.ai_configs !== undefined) {
-      const overrides = z
-        .record(
-          z.enum(['orchestrator', 'text', 'image', 'embedding']),
-          z.object({ provider: z.string(), model: z.string() }),
-        )
-        .parse(input.text_settings.ai_configs);
-      for (const [purpose, config] of Object.entries(overrides))
-        configSchema.parse({ ...config, purpose });
-    }
+    const current = checked(
+      await ctx.db
+        .from('agents')
+        .select('text_settings')
+        .eq('id', id)
+        .eq('workspace_id', ctx.workspaceId)
+        .single(),
+    );
+    if (current?.text_settings?.ai_configs !== undefined)
+      input.text_settings.ai_configs = current.text_settings.ai_configs;
     const references = z
       .array(z.uuid())
       .max(100)

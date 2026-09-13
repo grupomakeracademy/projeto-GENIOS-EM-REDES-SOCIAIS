@@ -12,19 +12,20 @@ try {
   await db.query('select 1');
   console.log('Conexão PostgreSQL validada.');
   if (process.argv.includes('--apply')) {
+    const version=process.argv.includes('--agent-ai')?'202609130002':'202609120001';
+    const name=process.argv.includes('--agent-ai')?'agent_ai_admin':'agent_isolation';
     await db.query('begin');
-    await db.query("select pg_advisory_xact_lock(202609120001)");
+    await db.query('select pg_advisory_xact_lock($1)',[version]);
     await db.query('create schema if not exists supabase_migrations');
     await db.query('create table if not exists supabase_migrations.schema_migrations(version text primary key, statements text[], name text)');
-    const version = '202609120001';
     const applied = await db.query('select version from supabase_migrations.schema_migrations where version=$1',[version]);
     if (!applied.rowCount) {
-      const sql = await readFile(new URL('../supabase/migrations/202609120001_agent_isolation.sql', import.meta.url), 'utf8');
+      const sql = await readFile(new URL(`../supabase/migrations/${version}_${name}.sql`, import.meta.url), 'utf8');
       await db.query(sql);
-      await db.query('insert into supabase_migrations.schema_migrations(version,statements,name) values($1,$2,$3)',[version,[sql],'agent_isolation']);
+      await db.query('insert into supabase_migrations.schema_migrations(version,statements,name) values($1,$2,$3)',[version,[sql],name]);
     }
     await db.query('commit');
-    console.log(applied.rowCount ? 'Migração já aplicada.' : 'Migração multiagente aplicada.');
+    console.log(applied.rowCount ? 'Migração já aplicada.' : `Migração ${name} aplicada.`);
   }
 } catch (error) {
   await db.query('rollback').catch(()=>{});

@@ -2,7 +2,9 @@
 import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AgentModels } from './models';
-import { Bot, Plus, Play, List, LayoutGrid, Check } from 'lucide-react';
+import { Bot, Plus, Play, List, LayoutGrid, Check, MessageCircle } from 'lucide-react';
+import { SocialLogo } from '@/components/social-logos';
+import './agents.css';
 import { Button, Card, Field, Notice, Empty, useT, useAction, api } from '@/components/ui';
 import { channels, type Agent, type Asset, type Channel } from '@/lib/domain';
 import { useLocale } from '@/components/ui';
@@ -88,7 +90,6 @@ export function AgentEditor({
       agents.find((a) => a.id === params.get('agent')) || agents[0] || null,
     ),
     [tab, setTab] = useState('briefing'),
-    [suggestion, setSuggestion] = useState(''),
     [refView, setRefView] = useState<'list' | 'thumbnails'>('list');
   const [schedule, setSchedule] = useState<Record<string, unknown>>(
     schedules.find((s) => s.agent_id === selected?.id) || {
@@ -102,7 +103,6 @@ export function AgentEditor({
     if (!agent) return;
     router.replace(`/agents?agent=${agent.id}`, { scroll: false });
     setSelected(agent);
-    setSuggestion('');
     setSchedule(
       schedules.find((s) => s.agent_id === agent.id) || {
         enabled: false,
@@ -195,57 +195,22 @@ export function AgentEditor({
             ))}
           </div>
           <Card>
-            {tab === 'IA' && (
-              <AgentModels agent={selected} onChange={setSelected} disabled={!canEdit} />
+            {tab === 'IA' && <AgentModels key={selected.id} agentId={selected.id} />}
+            {tab !== 'IA' && (
+              <Field label={t('agentName')}>
+                <input
+                  disabled={!canEdit}
+                  value={selected.name}
+                  onChange={(e) => setSelected({ ...selected, name: e.target.value })}
+                />
+              </Field>
             )}
-            <Field label={t('agentName')}>
-              <input
-                disabled={!canEdit}
-                value={selected.name}
-                onChange={(e) => setSelected({ ...selected, name: e.target.value })}
-              />
-            </Field>
             {tab === 'briefing' ? (
               <div className="grid two">{groupFields('briefing', briefingFields)}</div>
             ) : null}
             {tab === 'text' ? (
               <>
                 <div className="grid two">{groupFields('text_settings', textFields)}</div>
-                {canEdit ? (
-                  <Button
-                    secondary
-                    busy={action.busy}
-                    onClick={() =>
-                      action.act(async () => {
-                        const result = await api('agents', 'POST', {
-                          action: 'magic',
-                          id: selected.id,
-                          instructions: String(selected.text_settings.instructions || ''),
-                        });
-                        setSuggestion(result.suggestion);
-                      }, '')
-                    }
-                  >
-                    {t('magic')}
-                  </Button>
-                ) : null}
-                {suggestion ? (
-                  <Card>
-                    <h3>{t('suggestion')}</h3>
-                    <p style={{ whiteSpace: 'pre-wrap' }}>{suggestion}</p>
-                    <Button
-                      onClick={() => {
-                        setSelected({
-                          ...selected,
-                          text_settings: { ...selected.text_settings, instructions: suggestion },
-                        });
-                        setSuggestion('');
-                      }}
-                    >
-                      {t('apply')}
-                    </Button>
-                  </Card>
-                ) : null}
               </>
             ) : null}
             {tab === 'visual' ? (
@@ -355,43 +320,57 @@ export function AgentEditor({
               </>
             ) : null}
             {tab === 'channels' ? (
-              <div className="grid two">
-                {Object.entries(channels).map(([key, value]) => (
-                  <Card key={key}>
-                    <label className="check">
-                      <input
-                        type="checkbox"
-                        disabled={!canEdit}
-                        checked={selected.channels.includes(key as Channel)}
-                        onChange={(e) =>
-                          setSelected({
-                            ...selected,
-                            channels: e.target.checked
-                              ? [...selected.channels, key as Channel]
-                              : selected.channels.filter((c) => c !== key),
-                          })
-                        }
-                      />
-                      {value.name} · {value.ratio}
-                    </label>
-                    <Field label={t('instructions')}>
-                      <textarea
-                        disabled={!canEdit}
-                        value={String(selected.channel_settings[key] || '')}
-                        onChange={(e) =>
-                          setSelected({
-                            ...selected,
-                            channel_settings: {
-                              ...selected.channel_settings,
-                              [key]: e.target.value,
-                            },
-                          })
-                        }
-                      />
-                    </Field>
-                  </Card>
-                ))}
-              </div>
+              <>
+                <div className="agent-channel-guide">
+                  <MessageCircle size={22} />
+                  <div>
+                    <strong>Adapte a comunicação para cada canal</strong>
+                    <p>
+                      Cada rede social tem uma forma própria de comunicar. Defina como este gênio
+                      deve adaptar o conteúdo da sua marca por canal, mantendo a identidade e o
+                      posicionamento geral.
+                    </p>
+                  </div>
+                </div>
+                <div className="grid two">
+                  {Object.entries(channels).map(([key, value]) => (
+                    <Card key={key}>
+                      <label className="check">
+                        <input
+                          type="checkbox"
+                          disabled={!canEdit}
+                          checked={selected.channels.includes(key as Channel)}
+                          onChange={(e) =>
+                            setSelected({
+                              ...selected,
+                              channels: e.target.checked
+                                ? [...selected.channels, key as Channel]
+                                : selected.channels.filter((c) => c !== key),
+                            })
+                          }
+                        />
+                        <SocialLogo channel={key as Channel} size={24} />
+                        {value.name} · {value.ratio}
+                      </label>
+                      <Field label="Orientações do canal">
+                        <textarea
+                          disabled={!canEdit}
+                          value={String(selected.channel_settings[key] || '')}
+                          onChange={(e) =>
+                            setSelected({
+                              ...selected,
+                              channel_settings: {
+                                ...selected.channel_settings,
+                                [key]: e.target.value,
+                              },
+                            })
+                          }
+                        />
+                      </Field>
+                    </Card>
+                  ))}
+                </div>
+              </>
             ) : null}
             {tab === 'routine' ? (
               <>
@@ -501,28 +480,35 @@ export function AgentEditor({
               )
             ) : null}
             <Notice {...action} />
-            {canEdit && tab !== 'memory' ? (
-              <Button
-                busy={action.busy}
-                onClick={() =>
-                  action.act(async () => {
-                    const saved = await api('agents', 'POST', {
-                      ...selected,
-                      id: selected.id || undefined,
-                    });
-                    if (tab === 'routine')
-                      await api('agents', 'POST', {
-                        action: 'schedule',
-                        id: saved.id,
-                        ...schedule,
+            {canEdit && tab !== 'memory' && tab !== 'IA' ? (
+              <div className="agent-save-actions">
+                <Button
+                  busy={action.busy}
+                  onClick={() =>
+                    action.act(async () => {
+                      const saved = await api('agents', 'POST', {
+                        ...selected,
+                        text_settings: Object.fromEntries(
+                          Object.entries(selected.text_settings).filter(
+                            ([key]) => key !== 'ai_configs',
+                          ),
+                        ),
+                        id: selected.id || undefined,
                       });
-                    setSelected(saved);
-                    router.refresh();
-                  })
-                }
-              >
-                {t('save')}
-              </Button>
+                      if (tab === 'routine')
+                        await api('agents', 'POST', {
+                          action: 'schedule',
+                          id: saved.id,
+                          ...schedule,
+                        });
+                      setSelected(saved);
+                      router.refresh();
+                    })
+                  }
+                >
+                  {t('save')}
+                </Button>
+              </div>
             ) : null}
           </Card>
         </>
