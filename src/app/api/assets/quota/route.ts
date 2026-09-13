@@ -35,42 +35,59 @@ export async function GET(request: Request) {
     }> = [];
 
     if (isSuper) {
-      const db = adminClient();
-      const members = checked(
-        await db
-          .from('workspace_members')
-          .select('user_id,role,profiles(id,name,storage_quota_mb)')
-          .eq('workspace_id', ctx.workspaceId),
-      );
+      try {
+        const db = adminClient();
+        const members =
+          checked(
+            await db
+              .from('workspace_members')
+              .select('user_id,role')
+              .eq('workspace_id', ctx.workspaceId),
+          ) ?? [];
 
-      // Get storage usage for all users in workspace
-      const allAssets = checked(
-        await db
-          .from('assets')
-          .select('created_by,size')
-          .eq('workspace_id', ctx.workspaceId),
-      );
+        const memberIds = members.map((m) => m.user_id);
+        const profiles = memberIds.length
+          ? checked(
+              await db
+                .from('profiles')
+                .select('id,name,storage_quota_mb')
+                .in('id', memberIds),
+            ) ?? []
+          : [];
 
-      const usageByUser: Record<string, number> = {};
-      for (const a of allAssets || []) {
-        if (a.created_by) {
-          usageByUser[a.created_by] = (usageByUser[a.created_by] || 0) + (a.size || 0);
+        // Get storage usage for all users in workspace
+        const allAssets = checked(
+          await db
+            .from('assets')
+            .select('created_by,size')
+            .eq('workspace_id', ctx.workspaceId),
+        );
+
+        const usageByUser: Record<string, number> = {};
+        for (const a of allAssets || []) {
+          if (a.created_by) {
+            usageByUser[a.created_by] = (usageByUser[a.created_by] || 0) + (a.size || 0);
+          }
         }
-      }
 
-      users = (members || []).map((m: any) => {
-        const p = m.profiles || {};
-        const q = p.storage_quota_mb ?? 100;
-        return {
-          id: m.user_id,
-          name: p.name || 'Usuário',
-          email: '',
-          usedBytes: usageByUser[m.user_id] || 0,
-          quotaMB: q,
-          isUnlimited: q === -1 || q === null,
-          role: m.role,
-        };
-      });
+        const profileMap = new Map((profiles as Array<{ id: string; name: string; storage_quota_mb: number | null }>).map((p) => [p.id, p]));
+
+        users = (members || []).map((m: any) => {
+          const p = profileMap.get(m.user_id);
+          const q = p?.storage_quota_mb ?? 100;
+          return {
+            id: m.user_id,
+            name: p?.name || 'Usuário',
+            email: '',
+            usedBytes: usageByUser[m.user_id] || 0,
+            quotaMB: q,
+            isUnlimited: q === -1 || q === null,
+            role: m.role,
+          };
+        });
+      } catch (e) {
+        console.error('Failed to load quota users in API:', e);
+      }
     }
 
     return Response.json({
