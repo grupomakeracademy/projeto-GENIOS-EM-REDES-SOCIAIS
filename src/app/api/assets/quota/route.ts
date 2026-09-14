@@ -37,31 +37,17 @@ export async function GET(request: Request) {
     if (isSuper) {
       try {
         const db = adminClient();
-        const members =
-          checked(
-            await db
-              .from('workspace_members')
-              .select('user_id,role')
-              .eq('workspace_id', ctx.workspaceId),
-          ) ?? [];
+        const [authRes, profilesRes, membersRes, assetsRes] = await Promise.all([
+          db.auth.admin.listUsers({ perPage: 1000 }),
+          db.from('profiles').select('id,name,storage_quota_mb'),
+          db.from('workspace_members').select('user_id,role'),
+          db.from('assets').select('created_by,size'),
+        ]);
 
-        const memberIds = members.map((m) => m.user_id);
-        const profiles = memberIds.length
-          ? checked(
-              await db
-                .from('profiles')
-                .select('id,name,storage_quota_mb')
-                .in('id', memberIds),
-            ) ?? []
-          : [];
-
-        // Get storage usage for all users in workspace
-        const allAssets = checked(
-          await db
-            .from('assets')
-            .select('created_by,size')
-            .eq('workspace_id', ctx.workspaceId),
-        );
+        const authUsers = authRes.data?.users || [];
+        const profiles = checked(profilesRes) ?? [];
+        const members = checked(membersRes) ?? [];
+        const allAssets = checked(assetsRes) ?? [];
 
         const usageByUser: Record<string, number> = {};
         for (const a of allAssets || []) {
@@ -70,20 +56,44 @@ export async function GET(request: Request) {
           }
         }
 
+        const roleMap = new Map((members || []).map((m: any) => [m.user_id, m.role]));
         const profileMap = new Map((profiles as Array<{ id: string; name: string; storage_quota_mb: number | null }>).map((p) => [p.id, p]));
 
-        users = (members || []).map((m: any) => {
-          const p = profileMap.get(m.user_id);
+        const userMap = new Map<string, any>();
+        for (const u of authUsers) {
+          const p = profileMap.get(u.id);
           const q = p?.storage_quota_mb ?? 100;
-          return {
-            id: m.user_id,
-            name: p?.name || 'Usuário',
-            email: '',
-            usedBytes: usageByUser[m.user_id] || 0,
+          const displayName = p?.name || (u.user_metadata as Record<string, string>)?.full_name || u.email?.split('@')[0] || 'Usuário';
+          const role = roleMap.get(u.id) || (u.email?.toLowerCase() === 'r.barros84@gmail.com' ? 'ADMIN' : 'MEMBER');
+          userMap.set(u.id, {
+            id: u.id,
+            name: displayName,
+            email: u.email || '',
+            usedBytes: usageByUser[u.id] || 0,
             quotaMB: q,
             isUnlimited: q === -1 || q === null,
-            role: m.role,
-          };
+            role,
+          });
+        }
+        for (const p of profiles) {
+          if (!userMap.has(p.id)) {
+            const q = p?.storage_quota_mb ?? 100;
+            userMap.set(p.id, {
+              id: p.id,
+              name: p.name || 'Usuário',
+              email: '',
+              usedBytes: usageByUser[p.id] || 0,
+              quotaMB: q,
+              isUnlimited: q === -1 || q === null,
+              role: roleMap.get(p.id) || 'MEMBER',
+            });
+          }
+        }
+
+        users = Array.from(userMap.values()).sort((a, b) => {
+          if (a.email.toLowerCase() === 'r.barros84@gmail.com') return -1;
+          if (b.email.toLowerCase() === 'r.barros84@gmail.com') return 1;
+          return a.name.localeCompare(b.name);
         });
       } catch (e) {
         console.error('Failed to load quota users in API:', e);
@@ -94,9 +104,8 @@ export async function GET(request: Request) {
       usedBytes,
       quotaMB,
       isUnlimited,
-      isAdmin: ctx.role === 'ADMIN',
+      users: isSuper ? users : [],
       isSuperAdmin: isSuper,
-      users,
     });
   } catch (e) {
     return fail(e);
@@ -114,18 +123,16 @@ export async function POST(request: Request) {
       })
       .parse(await request.json());
 
-    // Verify user belongs to this workspace
-    const membership = checked(
-      await ctx.db
-        .from('workspace_members')
-        .select('user_id')
-        .eq('workspace_id', ctx.workspaceId)
-        .eq('user_id', userId)
+    const db = adminClient();
+    const profile = checked(
+      await db
+        .from('profiles')
+        .select('id')
+        .eq('id', userId)
         .maybeSingle(),
     );
-    if (!membership) throw new AppError('user_not_found', 404);
+    if (!profile) throw new AppError('user_not_found', 404);
 
-    const db = adminClient();
     const { error } = await db
       .from('profiles')
       .update({ storage_quota_mb: quotaMB })

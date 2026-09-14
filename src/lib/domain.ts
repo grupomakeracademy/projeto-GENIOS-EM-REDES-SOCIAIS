@@ -16,6 +16,14 @@ export const channelSchema = z.enum([
   'x',
   'linkedin',
 ]);
+export const QUALITY_MULTIPLIERS = {
+  low: 1,
+  medium: 3,
+  high: 9,
+} as const;
+export type ImageQuality = keyof typeof QUALITY_MULTIPLIERS;
+export const imageQualitySchema = z.enum(['low', 'medium', 'high']);
+export const userImageQualitySchema = z.enum(['low', 'medium']);
 export const statuses = [
   'DRAFT',
   'GENERATING',
@@ -171,3 +179,38 @@ export function validateVariants(
     }
   }
 }
+
+export type UserStatus = 'active' | 'inactive' | 'blocked';
+
+export type QuotaAdjustmentLog = {
+  id: string;
+  created_at: string;
+  actor: string;
+  admin_email?: string;
+  previous_quota_mb: number;
+  new_quota_mb: number;
+  reason?: string;
+};
+
+export type AdminUserDetail = {
+  id: string;
+  email: string;
+  name: string;
+  avatar_url?: string;
+  role: string;
+  status: UserStatus;
+  created_at: string;
+  last_sign_in_at: string | null;
+  // Objective usage metrics
+  total_generations: number;
+  saldo_consumido: number;
+  qualities_used: {
+    low: number;
+    medium: number;
+    high: number;
+  };
+  storage_used_bytes: number;
+  storage_quota_mb: number;
+  is_unlimited: boolean;
+  adjustment_history: QuotaAdjustmentLog[];
+};

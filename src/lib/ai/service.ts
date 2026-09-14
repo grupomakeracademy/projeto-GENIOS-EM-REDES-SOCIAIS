@@ -92,10 +92,15 @@ export class AIService {
     await this.usage(config, 'embedding', { latency_ms: Date.now() - start });
     return result;
   }
-  async image(prompt: string, ratio: string, references: { mimeType: string; data: string }[]) {
+  async image(
+    prompt: string,
+    ratio: string,
+    references: { mimeType: string; data: string }[],
+    quality: 'low' | 'medium' | 'high' = 'low',
+  ) {
     const config = await this.config('image'),
       start = Date.now();
-    const result = await generateImage(config, await this.key(config), prompt, ratio, references);
+    const result = await generateImage(config, await this.key(config), prompt, ratio, references, quality);
     await this.usage(config, 'image', { latency_ms: Date.now() - start, images: 1 });
     return { ...result, provider: config.provider, model: config.model };
   }

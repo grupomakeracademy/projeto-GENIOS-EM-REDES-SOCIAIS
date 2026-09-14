@@ -102,6 +102,7 @@ export async function POST(request: Request) {
         channels: z.array(channelSchema).min(1),
         image_count: z.number().int().min(0).max(20),
         image_style: z.string().max(120).optional(),
+        image_quality: z.enum(['low', 'medium', 'high']).optional(),
         is_carousel: z.boolean().optional(),
         cta: z.string().max(500).optional(),
         idempotency_key: z.uuid(),

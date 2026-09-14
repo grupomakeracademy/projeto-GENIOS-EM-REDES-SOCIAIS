@@ -20,6 +20,7 @@ export async function POST(request: Request) {
         agent_id: z.string().uuid(),
         instruction: z.string().max(10000).default(''),
         image_style: z.string().max(120).optional(),
+        image_quality: z.enum(['low', 'medium', 'high']).optional(),
         is_carousel: z.boolean().optional(),
         cta: z.string().max(500).optional(),
         channels: z.array(channelSchema).min(1),
@@ -33,6 +34,7 @@ export async function POST(request: Request) {
     const topic = body.instruction.trim() || 'Novo rascunho de conteúdo';
     const strategy = {
       image_style: body.image_style || 'Disney / Pixar',
+      image_quality: body.image_quality || 'low',
       is_carousel: body.is_carousel ?? false,
       cta: body.cta || '',
       channels: body.channels,

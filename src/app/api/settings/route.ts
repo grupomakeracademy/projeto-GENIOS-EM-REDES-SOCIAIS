@@ -5,19 +5,28 @@ import { configSchema } from '@/lib/domain';
 import { credentialStatus } from '@/lib/ai/credentials';
 import { openAIModels, effectiveConfigs } from '@/lib/ai/defaults';
 import type { AIConfig } from '@/lib/domain';
+import { requireSuperAdmin, isSuperAdmin } from '@/lib/security/super-admin';
 export async function GET(request: Request) {
   try {
     const ctx = await guard(request);
-    const configs = checked(
-      await ctx.db
+    const isSuper = isSuperAdmin(ctx.user);
+    const [configs, wsSettings] = await Promise.all([
+      ctx.db
         .from('ai_provider_configs')
         .select('purpose,provider,model')
         .eq('workspace_id', ctx.workspaceId),
-    );
+      ctx.db
+        .from('workspace_settings')
+        .select('settings')
+        .eq('workspace_id', ctx.workspaceId)
+        .maybeSingle(),
+    ]);
+    const globalQuality = (checked(wsSettings)?.settings as Record<string, string>)?.image_quality || 'low';
     return Response.json(
       {
-        configs: effectiveConfigs(configs as AIConfig[]),
-        credentials: ctx.role === 'ADMIN' ? credentialStatus() : null,
+        configs: isSuper ? effectiveConfigs(checked(configs) as AIConfig[]) : [],
+        credentials: isSuper ? credentialStatus() : null,
+        image_quality: globalQuality,
       },
       { headers: { 'Cache-Control': 'private, no-store' } },
     );
@@ -102,7 +111,32 @@ export async function POST(request: Request) {
       return Response.json({ ok: true, avatar_url: '' });
     } else if (raw.action === 'credential') {
       throw new AppError('forbidden', 403);
+    } else if (raw.action === 'image_quality') {
+      requireSuperAdmin(ctx.user);
+      const { quality } = z.object({ quality: z.enum(['low', 'medium', 'high']) }).parse(raw);
+      const db = adminClient();
+      const current = checked(
+        await db
+          .from('workspace_settings')
+          .select('settings')
+          .eq('workspace_id', ctx.workspaceId)
+          .maybeSingle(),
+      );
+      checked(
+        await db.from('workspace_settings').upsert(
+          {
+            workspace_id: ctx.workspaceId,
+            settings: {
+              ...((current?.settings as Record<string, unknown>) || {}),
+              image_quality: quality,
+            },
+          },
+          { onConflict: 'workspace_id' },
+        ),
+      );
+      return Response.json({ ok: true, quality });
     } else if (raw.action === 'models') {
+      requireSuperAdmin(ctx.user);
       const configs = z.array(configSchema).max(4).parse(raw.configs);
       for (const config of configs) {
         const model = checked(

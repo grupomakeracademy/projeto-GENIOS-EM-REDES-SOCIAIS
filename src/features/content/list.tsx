@@ -30,7 +30,7 @@ import {
   api,
 } from '@/components/ui';
 import { SocialLogo } from '@/components/social-logos';
-import { channels, statuses, type Agent, type Content, type Channel } from '@/lib/domain';
+import { channels, statuses, type Agent, type Content, type Channel, QUALITY_MULTIPLIERS } from '@/lib/domain';
 import { useGenerationRuns, RunCard } from './queue';
 import { ContentExecutionCard } from './cards';
 import { AgentFilter } from '@/components/agent-filter';
@@ -309,12 +309,14 @@ export function ContentList({
   page,
   agents,
   canEdit,
+  defaultImageQuality = 'low',
 }: {
   items: Content[];
   total: number;
   page: number;
   agents: Agent[];
   canEdit: boolean;
+  defaultImageQuality?: 'low' | 'medium';
 }) {
   const t = useT(),
     router = useRouter(),
@@ -328,6 +330,9 @@ export function ContentList({
         : ALL_CHANNELS,
     ),
     [imageStyle, setImageStyle] = useState('Disney / Pixar'),
+    [imageQuality, setImageQuality] = useState<'low' | 'medium'>(
+      defaultImageQuality === 'medium' ? 'medium' : 'low',
+    ),
     [instruction, setInstruction] = useState(''),
     [imageCount, setImageCount] = useState(2),
     [isCarousel, setIsCarousel] = useState(true),
@@ -409,6 +414,7 @@ export function ContentList({
         cta: cta.trim(),
         channels: selectedChannels,
         image_count: Number(imageCount),
+        image_quality: imageQuality,
         status: 'DRAFT',
       });
       setRevision((v) => v + 1);
@@ -627,6 +633,7 @@ export function ContentList({
                   cta: cta.trim(),
                   channels: selectedChannels,
                   image_count: Number(imageCount),
+                  image_quality: imageQuality,
                   idempotency_key: crypto.randomUUID(),
                 });
                 setRevision((v) => v + 1);
@@ -764,6 +771,28 @@ export function ContentList({
             </div>
 
             <div className="new-content-field">
+              <label className="new-content-label">Qualidade da Imagem</label>
+              <div className="quality-segmented-control">
+                <button
+                  type="button"
+                  className={`quality-pill ${imageQuality === 'low' ? 'active' : ''}`}
+                  onClick={() => setImageQuality('low')}
+                >
+                  <span className="quality-pill-name">Padrão</span>
+                  <span className="quality-pill-multiplier">1x cota</span>
+                </button>
+                <button
+                  type="button"
+                  className={`quality-pill ${imageQuality === 'medium' ? 'active' : ''}`}
+                  onClick={() => setImageQuality('medium')}
+                >
+                  <span className="quality-pill-name">Premium</span>
+                  <span className="quality-pill-multiplier">3x cota</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="new-content-field">
               <label className="new-content-label">Imagens por canal</label>
               <div className="image-count-stepper-row">
                 <div className="image-count-stepper">
@@ -789,7 +818,7 @@ export function ContentList({
                 </div>
                 <div className="total-consumption-badge">
                   <span>
-                    o total de conteúdos consumidos será <strong>{imageCount * selectedChannels.length}</strong>
+                    o total de conteúdos consumidos será <strong>{imageCount * selectedChannels.length * (QUALITY_MULTIPLIERS[imageQuality] ?? 1)}</strong>
                   </span>
                 </div>
               </div>

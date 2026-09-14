@@ -205,6 +205,7 @@ export async function generateImage(
   prompt: string,
   ratio: string,
   references: { mimeType: string; data: string }[] = [],
+  quality: 'low' | 'medium' | 'high' = 'low',
 ) {
   if (config.provider === 'anthropic') throw new Error('unsupported_capability');
   const fullBleedInstruction = `Full-bleed edge-to-edge background with 100% canvas coverage. Do NOT add outer white frames, polaroid borders, letterbox bars, or canvas margins around the image. IMPORTANT COMPOSITION & SAFE AREA RULES: All essential graphic elements, characters, people, faces, mascots, logos, text, headlines, and call-to-action buttons must stay well inside the internal safe area (at least 8% away from the top, bottom, left, and right edges of the canvas). NEVER cut off, crop, or let text, titles, logos, speech balloons, or character faces touch any of the canvas borders. Keep comfortable breathing room between all content and the frame edges while the background scenery extends seamlessly all the way to every border.`;
@@ -245,6 +246,7 @@ export async function generateImage(
       form.set('model', config.model);
       form.set('prompt', imagePrompt);
       form.set('size', size);
+      form.set('quality', quality);
       form.set('n', '1');
       form.set('output_format', 'png');
       references.forEach((ref, i) =>
@@ -268,6 +270,7 @@ export async function generateImage(
         prompt: imagePrompt,
         n: 1,
         size,
+        quality,
         output_format: 'png',
       },
       'openai',

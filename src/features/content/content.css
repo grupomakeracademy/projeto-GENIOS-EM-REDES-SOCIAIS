@@ -1288,6 +1288,51 @@ fieldset.content-status-filters {
   box-shadow: 0 2px 6px rgba(79, 70, 229, 0.3);
 }
 
+/* Quality Segmented Control */
+.quality-segmented-control {
+  display: inline-flex;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 3px;
+  gap: 4px;
+}
+.quality-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  padding: 7px 18px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.quality-pill-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+.quality-pill-multiplier {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(100, 116, 139, 0.12);
+  color: #64748b;
+}
+.quality-pill.active {
+  background: linear-gradient(135deg, #4f46e5, #6366f1);
+  box-shadow: 0 2px 6px rgba(79, 70, 229, 0.3);
+}
+.quality-pill.active .quality-pill-name {
+  color: #ffffff;
+}
+.quality-pill.active .quality-pill-multiplier {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
 /* Label with Prompt Mágico Action */
 .field-label-with-action {
   display: flex;

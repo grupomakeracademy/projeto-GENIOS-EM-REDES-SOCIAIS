@@ -102,6 +102,12 @@ async function saveImage(
   const ai = new AIService(job.workspace_id, job.id, agent.id),
     ratio = channels[variant.channel].ratio;
   const selectedStyle = String((job.payload as Record<string, unknown>)?.image_style || agent.visual_settings?.style || '').trim();
+  let quality = (job.payload as Record<string, unknown>)?.image_quality as 'low' | 'medium' | 'high' | undefined;
+  if (!quality || !['low', 'medium', 'high'].includes(quality)) {
+    const ws = await db.from('workspace_settings').select('settings').eq('workspace_id', job.workspace_id).maybeSingle();
+    const globalQ = (ws?.data?.settings as Record<string, string>)?.image_quality;
+    quality = (globalQ && ['low', 'medium', 'high'].includes(globalQ)) ? (globalQ as 'low' | 'medium' | 'high') : 'low';
+  }
   const imagePromptContext = JSON.stringify({
     visual: { ...agent.visual_settings, ...(selectedStyle ? { style: selectedStyle } : {}) },
     briefing: agent.briefing,
@@ -116,6 +122,7 @@ async function saveImage(
     imagePromptContext,
     ratio,
     await references(agent),
+    quality,
   );
   await renewLease(job);
   // Preserve the authentic original image directly from the AI model
@@ -156,6 +163,7 @@ export async function runPipeline(job: Job) {
       channels: z.array(channelSchema).min(1).optional(),
       image_count: z.number().int().min(0).max(20).optional(),
       image_style: z.string().optional(),
+      image_quality: z.enum(['low', 'medium', 'high']).optional(),
       is_carousel: z.boolean().optional(),
       cta: z.string().optional(),
     })
