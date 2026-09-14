@@ -1,8 +1,8 @@
 'use client';
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AgentModels } from './models';
-import { Bot, Plus, Play, List, LayoutGrid, Check, MessageCircle } from 'lucide-react';
+import { Bot, Plus, Play, List, LayoutGrid, Check, MessageCircle, Clock, ChevronDown } from 'lucide-react';
 import { SocialLogo } from '@/components/social-logos';
 import './agents.css';
 import { Button, Card, Field, Notice, Empty, useT, useAction, api } from '@/components/ui';
@@ -68,6 +68,178 @@ const textFields: Record<string, [string, string, string]> = {
   examples: ['Exemplos reais de posts', 'Real post examples', 'Ejemplos reales de publicaciones'],
   ctas: ['CTAs', 'CTAs', 'CTAs'],
 };
+const WEEKDAY_OPTIONS = [
+  { value: 1, label: '1 (Segunda-Feira)' },
+  { value: 2, label: '2 (Terça-Feira)' },
+  { value: 3, label: '3 (Quarta-Feira)' },
+  { value: 4, label: '4 (Quinta-Feira)' },
+  { value: 5, label: '5 (Sexta-Feira)' },
+  { value: 6, label: '6 (Sábado)' },
+  { value: 7, label: '7 (Domingo)' },
+];
+
+function WeekdaySelector({
+  value = [],
+  onChange,
+  disabled,
+}: {
+  value: number[];
+  onChange: (weekdays: number[]) => void;
+  disabled?: boolean;
+}) {
+  const currentDays = Array.isArray(value) ? value : [];
+
+  const toggleDay = (day: number) => {
+    if (disabled) return;
+    if (currentDays.includes(day)) {
+      onChange(currentDays.filter((d) => d !== day).sort((a, b) => a - b));
+    } else {
+      onChange([...currentDays, day].sort((a, b) => a - b));
+    }
+  };
+
+  const isSegASex =
+    currentDays.length === 5 && [1, 2, 3, 4, 5].every((d) => currentDays.includes(d));
+  const isTodos =
+    currentDays.length === 7 && [1, 2, 3, 4, 5, 6, 7].every((d) => currentDays.includes(d));
+
+  return (
+    <div className="agent-weekday-horizontal-container">
+      <div className="agent-weekday-actions-bar">
+        <button
+          type="button"
+          disabled={disabled}
+          className={`quick-action-btn ${isSegASex ? 'active-preset' : ''}`}
+          onClick={() => onChange([1, 2, 3, 4, 5])}
+        >
+          Seg a Sex (1 a 5)
+        </button>
+        <button
+          type="button"
+          disabled={disabled}
+          className={`quick-action-btn ${isTodos ? 'active-preset' : ''}`}
+          onClick={() => onChange([1, 2, 3, 4, 5, 6, 7])}
+        >
+          Todos (1 a 7)
+        </button>
+        <button
+          type="button"
+          disabled={disabled}
+          className="quick-action-btn clear"
+          onClick={() => onChange([])}
+        >
+          Limpar
+        </button>
+      </div>
+
+      <div className="agent-weekday-horizontal">
+        {WEEKDAY_OPTIONS.map((opt) => {
+          const isSelected = currentDays.includes(opt.value);
+          return (
+            <label
+              key={opt.value}
+              className={`agent-weekday-chip ${isSelected ? 'selected' : ''}`}
+            >
+              <input
+                type="checkbox"
+                disabled={disabled}
+                checked={isSelected}
+                onChange={() => toggleDay(opt.value)}
+              />
+              <span className="weekday-text">{opt.label}</span>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ModernTimePicker({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (time: string) => void;
+  disabled?: boolean;
+}) {
+  const [hourStr, minStr] = (value && value.includes(':') ? value.split(':') : ['08', '00']);
+  const currentHour = (hourStr || '08').padStart(2, '0');
+  const currentMin = (minStr || '00').padStart(2, '0');
+
+  const hours = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
+  const minutes = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
+
+  const presets = ['08:00', '11:30', '14:00', '18:00', '20:30', '23:30'];
+
+  const handleHourChange = (newHour: string) => {
+    if (disabled) return;
+    onChange(`${newHour}:${currentMin}`);
+  };
+
+  const handleMinChange = (newMin: string) => {
+    if (disabled) return;
+    onChange(`${currentHour}:${newMin}`);
+  };
+
+  return (
+    <div className="agent-modern-time-picker">
+      <div className="agent-time-inputs">
+        <div className="agent-time-unit">
+          <span className="unit-label">Hora</span>
+          <select
+            disabled={disabled}
+            value={currentHour}
+            onChange={(e) => handleHourChange(e.target.value)}
+            className="time-select"
+          >
+            {hours.map((h) => (
+              <option key={h} value={h}>
+                {h}h
+              </option>
+            ))}
+          </select>
+        </div>
+        <span className="time-colon">:</span>
+        <div className="agent-time-unit">
+          <span className="unit-label">Minuto</span>
+          <select
+            disabled={disabled}
+            value={currentMin}
+            onChange={(e) => handleMinChange(e.target.value)}
+            className="time-select"
+          >
+            {minutes.map((m) => (
+              <option key={m} value={m}>
+                {m}m
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="agent-time-display">
+          <Clock size={16} />
+          <span>{currentHour}:{currentMin}</span>
+        </div>
+      </div>
+      <div className="agent-time-presets">
+        <span className="presets-label">Sugestões:</span>
+        {presets.map((preset) => (
+          <button
+            key={preset}
+            type="button"
+            disabled={disabled}
+            className={`preset-pill ${value === preset ? 'active' : ''}`}
+            onClick={() => onChange(preset)}
+          >
+            {preset}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function AgentEditor({
   agents,
   assets,
@@ -433,32 +605,38 @@ export function AgentEditor({
                       onChange={(e) => setSchedule({ ...schedule, timezone: e.target.value })}
                     />
                   </Field>
-                  <Field label={t('time')}>
-                    <input
-                      type="time"
-                      value={String(schedule.local_time)}
-                      onChange={(e) => setSchedule({ ...schedule, local_time: e.target.value })}
+                  <div className="field">
+                    <span>{t('time')}</span>
+                    <ModernTimePicker
+                      disabled={!canEdit}
+                      value={String(schedule.local_time || '08:00')}
+                      onChange={(time) => setSchedule({ ...schedule, local_time: time })}
                     />
-                  </Field>
-                  <Field label={t('weekdays')}>
-                    <input
-                      value={(schedule.weekdays as number[]).join(',')}
-                      onChange={(e) =>
-                        setSchedule({
-                          ...schedule,
-                          weekdays: e.target.value.split(',').map(Number),
-                        })
+                  </div>
+                  <div className="field" style={{ gridColumn: '1 / -1' }}>
+                    <span>{t('weekdays')}</span>
+                    <WeekdaySelector
+                      disabled={!canEdit}
+                      value={
+                        Array.isArray(schedule.weekdays)
+                          ? (schedule.weekdays as (number | string)[])
+                              .map(Number)
+                              .filter((n) => !isNaN(n) && n >= 1 && n <= 7)
+                          : [1, 2, 3, 4, 5]
                       }
+                      onChange={(weekdays) => setSchedule({ ...schedule, weekdays })}
                     />
-                  </Field>
-                  <label className="check">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(schedule.enabled)}
-                      onChange={(e) => setSchedule({ ...schedule, enabled: e.target.checked })}
-                    />
-                    {t('enabled')}
-                  </label>
+                  </div>
+                  <div style={{ gridColumn: '1 / -1', marginTop: 4 }}>
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(schedule.enabled)}
+                        onChange={(e) => setSchedule({ ...schedule, enabled: e.target.checked })}
+                      />
+                      {t('enabled')}
+                    </label>
+                  </div>
                 </div>
               </>
             ) : null}
@@ -495,12 +673,30 @@ export function AgentEditor({
                         ),
                         id: selected.id || undefined,
                       });
-                      if (tab === 'routine')
+                      if (tab === 'routine') {
+                        const parsedWeekdays = Array.isArray(schedule.weekdays)
+                          ? (schedule.weekdays as (number | string)[])
+                              .map(Number)
+                              .filter((n) => !isNaN(n) && n >= 1 && n <= 7)
+                          : [1, 2, 3, 4, 5];
                         await api('agents', 'POST', {
                           action: 'schedule',
                           id: saved.id,
-                          ...schedule,
+                          agent_id: saved.id,
+                          timezone: String(schedule.timezone || 'America/Sao_Paulo'),
+                          local_time: String(schedule.local_time || '08:00'),
+                          weekdays: parsedWeekdays.length ? parsedWeekdays : [1, 2, 3, 4, 5],
+                          enabled: Boolean(schedule.enabled),
                         });
+                        setSchedule((prev) => ({
+                          ...prev,
+                          agent_id: saved.id,
+                          timezone: schedule.timezone,
+                          local_time: schedule.local_time,
+                          weekdays: parsedWeekdays.length ? parsedWeekdays : [1, 2, 3, 4, 5],
+                          enabled: Boolean(schedule.enabled),
+                        }));
+                      }
                       setSelected(saved);
                       router.refresh();
                     })

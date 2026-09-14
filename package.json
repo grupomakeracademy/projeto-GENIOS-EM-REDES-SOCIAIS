@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "commercial:dev": "npm --prefix apps/commercial run dev",
+    "commercial:build": "npm --prefix apps/commercial run build",
+    "commercial:start": "npm --prefix apps/commercial run start",
     "dev": "next dev --hostname 127.0.0.1 --port 3001",
     "build": "next build",
     "start": "next start --hostname 127.0.0.1 --port 3001",

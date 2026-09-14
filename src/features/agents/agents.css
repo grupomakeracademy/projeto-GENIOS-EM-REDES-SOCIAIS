@@ -86,3 +86,181 @@
     text-align: center;
   }
 }
+
+/* Weekday Horizontal Selector */
+.agent-weekday-horizontal-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+.agent-weekday-actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.agent-weekday-actions-bar .quick-action-btn {
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid var(--border, #e6ebf8);
+  background: var(--surface, #fff);
+  color: var(--ink, #101333);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.agent-weekday-actions-bar .quick-action-btn:hover {
+  background: var(--blue, #2866ff);
+  color: #fff;
+  border-color: var(--blue, #2866ff);
+}
+.agent-weekday-actions-bar .quick-action-btn.active-preset {
+  background: var(--blue, #2866ff);
+  color: #fff;
+  border-color: var(--blue, #2866ff);
+}
+.agent-weekday-actions-bar .quick-action-btn.clear:hover {
+  background: var(--danger, #c63f51);
+  border-color: var(--danger, #c63f51);
+  color: #fff;
+}
+.agent-weekday-horizontal {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.agent-weekday-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #e6ebf8);
+  background: var(--surface, #fff);
+  color: var(--ink, #101333);
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+.agent-weekday-chip:hover {
+  background: var(--canvas, #f6f9ff);
+  border-color: var(--blue, #2866ff);
+}
+.agent-weekday-chip.selected {
+  background: rgba(40, 102, 255, 0.09);
+  border-color: var(--blue, #2866ff);
+  color: var(--blue, #2866ff);
+  font-weight: 600;
+}
+.agent-weekday-chip input[type='checkbox'] {
+  width: 17px;
+  height: 17px;
+  cursor: pointer;
+  accent-color: var(--blue, #2866ff);
+  margin: 0;
+  flex-shrink: 0;
+}
+.agent-weekday-chip .weekday-text {
+  white-space: nowrap;
+}
+
+/* Modern Time Picker */
+.agent-modern-time-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.agent-time-inputs {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.agent-time-unit {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.agent-time-unit .unit-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted, #6875a0);
+}
+.agent-time-unit select.time-select {
+  padding: 8px 10px;
+  font-weight: 600;
+  font-size: 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #e6ebf8);
+  background: var(--surface, #fff);
+  color: var(--ink, #101333);
+  cursor: pointer;
+  width: 100%;
+}
+.agent-time-colon {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--muted, #6875a0);
+  padding-bottom: 8px;
+  user-select: none;
+}
+.agent-time-display {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  height: 38px;
+  background: rgba(40, 102, 255, 0.08);
+  color: var(--blue, #2866ff);
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 14px;
+  white-space: nowrap;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+.agent-time-presets {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.agent-time-presets .presets-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted, #6875a0);
+  margin-right: 2px;
+}
+.agent-time-presets .preset-pill {
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 14px;
+  border: 1px solid var(--border, #e6ebf8);
+  background: var(--surface, #fff);
+  color: var(--ink, #101333);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.agent-time-presets .preset-pill:hover {
+  border-color: var(--blue, #2866ff);
+  color: var(--blue, #2866ff);
+  background: rgba(40, 102, 255, 0.05);
+}
+.agent-time-presets .preset-pill.active {
+  background: var(--blue, #2866ff);
+  color: #fff;
+  border-color: var(--blue, #2866ff);
+  font-weight: 600;
+}
+

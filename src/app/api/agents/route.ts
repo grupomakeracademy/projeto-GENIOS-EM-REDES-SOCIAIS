@@ -62,28 +62,52 @@ export async function POST(request: Request) {
     if (raw.action === 'schedule') {
       const input = z
         .object({
-          id: z.uuid(),
+          id: z.uuid().optional(),
+          agent_id: z.uuid().optional(),
           timezone: z.string(),
           local_time: z.string(),
           weekdays: z.array(z.number().int().min(1).max(7)).min(1),
           enabled: z.boolean(),
         })
         .parse(raw);
-      const agent = checked(
+      let targetAgentId = input.agent_id || input.id;
+      if (!targetAgentId) throw new AppError('invalid_input');
+      let agent = checked(
         await ctx.db
           .from('agents')
           .select('id')
-          .eq('id', input.id)
+          .eq('id', targetAgentId)
           .eq('workspace_id', ctx.workspaceId)
           .maybeSingle(),
       );
+      if (!agent && input.id) {
+        const sched = checked(
+          await ctx.db
+            .from('agent_schedules')
+            .select('agent_id')
+            .eq('id', input.id)
+            .eq('workspace_id', ctx.workspaceId)
+            .maybeSingle(),
+        );
+        if (sched?.agent_id) {
+          targetAgentId = sched.agent_id;
+          agent = checked(
+            await ctx.db
+              .from('agents')
+              .select('id')
+              .eq('id', targetAgentId)
+              .eq('workspace_id', ctx.workspaceId)
+              .maybeSingle(),
+          );
+        }
+      }
       if (!agent) throw new AppError('forbidden', 403);
       const next = nextOccurrence(input.local_time, input.weekdays, input.timezone);
       checked(
         await adminClient().from('agent_schedules').upsert(
           {
             workspace_id: ctx.workspaceId,
-            agent_id: input.id,
+            agent_id: targetAgentId,
             timezone: input.timezone,
             local_time: input.local_time,
             weekdays: input.weekdays,
