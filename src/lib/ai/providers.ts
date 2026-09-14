@@ -35,7 +35,8 @@ export async function apiJSON(
     throw new Error('timeout');
   }
   if (!response.ok) {
-    console.error(`[AI Provider] ${method} status ${response.status}`);
+    const errorText = await response.text().catch(() => '');
+    console.error(`[AI Provider] ${method} status ${response.status} from ${url}:`, errorText);
     throw new Error(
       response.status === 429
         ? 'rate_limit'
@@ -210,6 +211,7 @@ export async function generateImage(
   if (config.provider === 'anthropic') throw new Error('unsupported_capability');
   const fullBleedInstruction = `Full-bleed edge-to-edge background with 100% canvas coverage. Do NOT add outer white frames, polaroid borders, letterbox bars, or canvas margins around the image. IMPORTANT COMPOSITION & SAFE AREA RULES: All essential graphic elements, characters, people, faces, mascots, logos, text, headlines, and call-to-action buttons must stay well inside the internal safe area (at least 8% away from the top, bottom, left, and right edges of the canvas). NEVER cut off, crop, or let text, titles, logos, speech balloons, or character faces touch any of the canvas borders. Keep comfortable breathing room between all content and the frame edges while the background scenery extends seamlessly all the way to every border.`;
   if (config.provider === 'google') {
+    const geminiRatio = ratio === '4:5' ? '3:4' : ratio;
     const data = geminiResponse.parse(
       await apiJSON(
         `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.model)}:generateContent`,
@@ -219,7 +221,7 @@ export async function generateImage(
             {
               parts: [
                 {
-                  text: `Create a brand image. Aspect ratio ${ratio}. ${fullBleedInstruction} Reference images are visual data only. ${prompt}`,
+                  text: `Create a brand image. Aspect ratio ${geminiRatio}. ${fullBleedInstruction} Reference images are visual data only. ${prompt}`,
                 },
                 ...references.map((inlineData) => ({ inlineData })),
               ],
@@ -227,7 +229,7 @@ export async function generateImage(
           ],
           generationConfig: {
             responseModalities: ['TEXT', 'IMAGE'],
-            imageConfig: { aspectRatio: ratio },
+            imageConfig: { aspectRatio: geminiRatio },
           },
         },
         'google',
@@ -237,8 +239,22 @@ export async function generateImage(
     if (!img) throw new Error('invalid_output');
     return { bytes: Buffer.from(img.data, 'base64'), mime: img.mimeType };
   }
-  const size = ratio === '1:1' ? '1024x1024' : ratio === '16:9' ? '1536x1024' : '1024x1536';
-  const imagePrompt = `${fullBleedInstruction} Reference images are visual data only. ${prompt}`;
+
+  const isDallE3 = config.model.toLowerCase().includes('dall-e-3');
+  const isDallE2 = config.model.toLowerCase().includes('dall-e-2');
+  const isDallE = isDallE3 || isDallE2;
+  const openAIQuality = isDallE3
+    ? (quality === 'medium' || quality === 'high' ? 'hd' : 'standard')
+    : quality;
+  const size = ratio === '1:1'
+    ? '1024x1024'
+    : ratio === '16:9'
+      ? (isDallE3 ? '1792x1024' : '1536x1024')
+      : (isDallE3 ? '1024x1792' : '1024x1536');
+
+  const maxPromptLength = isDallE ? 3800 : 8000;
+  const sanitizedPrompt = prompt.length > maxPromptLength ? prompt.slice(0, maxPromptLength) : prompt;
+  const imagePrompt = `${fullBleedInstruction} Reference images are visual data only. ${sanitizedPrompt}`.slice(0, maxPromptLength);
   let rawResponse: unknown;
   if (references.length) {
     try {
@@ -246,9 +262,13 @@ export async function generateImage(
       form.set('model', config.model);
       form.set('prompt', imagePrompt);
       form.set('size', size);
-      form.set('quality', quality);
+      form.set('quality', openAIQuality);
       form.set('n', '1');
-      form.set('output_format', 'png');
+      if (isDallE) {
+        form.set('response_format', 'b64_json');
+      } else {
+        form.set('output_format', 'png');
+      }
       references.forEach((ref, i) =>
         form.append(
           'image[]',
@@ -262,23 +282,46 @@ export async function generateImage(
     }
   }
   if (!rawResponse) {
+    const payload: Record<string, unknown> = {
+      model: config.model,
+      prompt: imagePrompt,
+      n: 1,
+      size,
+      quality: openAIQuality,
+    };
+    if (isDallE) {
+      payload.response_format = 'b64_json';
+    } else {
+      payload.output_format = 'png';
+    }
     rawResponse = await apiJSON(
       'https://api.openai.com/v1/images/generations',
       key,
-      {
-        model: config.model,
-        prompt: imagePrompt,
-        n: 1,
-        size,
-        quality,
-        output_format: 'png',
-      },
+      payload,
       'openai',
     );
   }
-  const data = z.object({ data: z.array(z.object({ b64_json: z.string() })) }).parse(rawResponse);
-  if (!data.data[0]) throw new Error('invalid_output');
-  return { bytes: Buffer.from(data.data[0].b64_json, 'base64'), mime: 'image/png' };
+  const data = z
+    .object({
+      data: z.array(
+        z.object({
+          b64_json: z.string().optional(),
+          url: z.string().optional(),
+        }),
+      ),
+    })
+    .parse(rawResponse);
+  const first = data.data[0];
+  if (!first) throw new Error('invalid_output');
+  if (first.b64_json) {
+    return { bytes: Buffer.from(first.b64_json, 'base64'), mime: 'image/png' };
+  } else if (first.url) {
+    const dl = await fetch(first.url);
+    if (!dl.ok) throw new Error('invalid_output');
+    const buf = Buffer.from(await dl.arrayBuffer());
+    return { bytes: buf, mime: dl.headers.get('content-type') || 'image/png' };
+  }
+  throw new Error('invalid_output');
 }
 export async function validateCredential(provider: ProviderId, key: string) {
   await apiJSON(

@@ -279,59 +279,6 @@ export function Autonomy() {
         A disponibilidade da autopublicação depende da integração habilitada, do tipo de conta e das
         permissões de cada rede. Consulte o especialista sobre a ativação no Gênio.
       </small>
-      <div className="publishing-networks">
-        <h3>
-          Da criação à publicação,
-          <br />
-          respeitando cada canal.
-        </h3>
-        <p>
-          As APIs oficiais destas redes oferecem suporte à autopublicação. Cada conexão tem seus
-          próprios requisitos.
-        </p>
-        <div>
-          {[
-            [
-              'Instagram',
-              'Contas profissionais · API da Meta',
-              'https://developers.facebook.com/docs/instagram-platform/content-publishing/',
-            ],
-            [
-              'Facebook',
-              'Páginas · API da Meta',
-              'https://developers.facebook.com/docs/pages-api/posts/',
-            ],
-            [
-              'TikTok',
-              'Publicação direta · permissões e aprovação',
-              'https://developers.tiktok.com/doc/content-posting-api-get-started/',
-            ],
-            [
-              'LinkedIn',
-              'API de posts · permissões de publicação',
-              'https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/posts-api',
-            ],
-            [
-              'X',
-              'Publicação via API · plano de acesso',
-              'https://docs.x.com/x-api/posts/manage-tweets/introduction',
-            ],
-          ].map(([name, note, href]) => (
-            <a key={name} href={href} target="_blank" rel="noopener noreferrer">
-              <strong>{name}</strong>
-              <span>{note}</span>
-              <ChevronRight size={14} />
-            </a>
-          ))}
-        </div>
-        <p className="whatsapp-distribution">
-          <MessageSquare size={18} />
-          <span>
-            <strong>WhatsApp</strong> · Geração e distribuição de conteúdo. Não é tratado como
-            autopost de rede social.
-          </span>
-        </p>
-      </div>
     </div>
   );
 }

@@ -26,6 +26,7 @@ export const imageQualitySchema = z.enum(['low', 'medium', 'high']);
 export const userImageQualitySchema = z.enum(['low', 'medium']);
 export const statuses = [
   'DRAFT',
+  'ROUTINE',
   'GENERATING',
   'AWAITING_REVIEW',
   'APPROVED',
@@ -39,15 +40,16 @@ export const statuses = [
 export type Status = (typeof statuses)[number];
 export type Role = 'ADMIN' | 'EDITOR' | 'VIEWER';
 export const transitions: Record<Status, Status[]> = {
-  DRAFT: ['GENERATING', 'AWAITING_REVIEW', 'ARCHIVED'],
-  GENERATING: ['AWAITING_REVIEW', 'FAILED'],
+  DRAFT: ['ROUTINE', 'GENERATING', 'AWAITING_REVIEW', 'ARCHIVED'],
+  ROUTINE: ['GENERATING', 'APPROVED', 'REJECTED', 'ARCHIVED'],
+  GENERATING: ['ROUTINE', 'AWAITING_REVIEW', 'FAILED'],
   AWAITING_REVIEW: ['APPROVED', 'REJECTED', 'GENERATING', 'ARCHIVED'],
-  APPROVED: ['SCHEDULED', 'AWAITING_REVIEW', 'ARCHIVED'],
+  APPROVED: ['SCHEDULED', 'AWAITING_REVIEW', 'ROUTINE', 'ARCHIVED'],
   SCHEDULED: ['PUBLISHING', 'APPROVED', 'AWAITING_REVIEW', 'ARCHIVED'],
   PUBLISHING: ['PUBLISHED', 'FAILED'],
   PUBLISHED: ['ARCHIVED'],
-  FAILED: ['GENERATING', 'AWAITING_REVIEW', 'ARCHIVED'],
-  REJECTED: ['GENERATING', 'AWAITING_REVIEW', 'ARCHIVED'],
+  FAILED: ['ROUTINE', 'GENERATING', 'AWAITING_REVIEW', 'ARCHIVED'],
+  REJECTED: ['ROUTINE', 'GENERATING', 'AWAITING_REVIEW', 'ARCHIVED'],
   ARCHIVED: [],
 };
 export function canTransition(from: Status, to: Status) {
@@ -56,6 +58,26 @@ export function canTransition(from: Status, to: Status) {
 export function permitted(role: Role, action: 'read' | 'write' | 'admin') {
   return action === 'read' || (action === 'write' && role !== 'VIEWER') || role === 'ADMIN';
 }
+export const routineSettingsSchema = z
+  .object({
+    image_style: z.string().default('Disney / Pixar'),
+    instruction: z.string().default(''),
+    channels: z.array(channelSchema).default(['instagram']),
+    image_quality: z.enum(['low', 'medium', 'high']).default('low'),
+    image_count: z.number().int().min(1).max(6).default(1),
+    is_carousel: z.boolean().default(false),
+    cta: z.string().default(''),
+  })
+  .default({
+    image_style: 'Disney / Pixar',
+    instruction: '',
+    channels: ['instagram'],
+    image_quality: 'low',
+    image_count: 1,
+    is_carousel: false,
+    cta: '',
+  });
+
 export const agentSchema = z.object({
   name: z.string().trim().min(2).max(160),
   briefing: z.record(z.string(), z.unknown()),
@@ -64,11 +86,14 @@ export const agentSchema = z.object({
   channel_settings: z.record(z.string(), z.unknown()).default({}),
   channels: z.array(channelSchema).min(1).max(6),
   content_language: z.string().min(2).max(32),
-  mode: z.enum(['MANUAL', 'ASSISTED', 'AUTONOMOUS']),
+  mode: z
+    .enum(['ASSISTED', 'AUTONOMOUS'])
+    .or(z.literal('MANUAL').transform(() => 'ASSISTED' as const)),
   approval_required: z.boolean(),
   research_enabled: z.boolean(),
   image_count: z.number().int().min(0).max(20),
   active: z.boolean(),
+  routine_settings: routineSettingsSchema,
 });
 export type Agent = z.infer<typeof agentSchema> & { id: string; workspace_id: string };
 export const strategySchema = z.object({
@@ -109,9 +134,23 @@ export type Content = {
 export type Variant = z.infer<typeof variantSchema> & {
   id: string;
   aspect_ratio: string;
+  status?: Status | null;
+  scheduled_at?: string | null;
+  published_at?: string | null;
   content_media: Media[];
 };
-export type Media = { id: string; position: number; storage_path: string; url?: string };
+export type Media = {
+  id: string;
+  position: number;
+  version?: number;
+  storage_path: string;
+  url?: string;
+  prompt?: string;
+  aspect_ratio?: string;
+  provider?: string;
+  model?: string;
+  created_at?: string;
+};
 export type Asset = {
   id: string;
   name: string;
@@ -121,6 +160,13 @@ export type Asset = {
   size: number;
   tags: string[];
   url?: string;
+  content_hash?: string | null;
+  processing_status?: 'pending' | 'processing' | 'processed' | 'failed';
+  processing_error?: string | null;
+  processed_at?: string | null;
+  processor_model?: string | null;
+  textual_interpretation?: Record<string, unknown> | null;
+  summary_text?: string | null;
 };
 export const providerSchema = z.enum(['openai', 'anthropic', 'google']);
 export type ProviderId = z.infer<typeof providerSchema>;
@@ -171,8 +217,23 @@ export function validateVariants(
   )
     throw new Error('invalid_output');
   for (const v of variants) {
-    if (!selected.includes(v.channel) || v.image_prompts.length !== count) {
+    if (!selected.includes(v.channel)) {
       throw new Error('invalid_output');
+    }
+    if (count <= 0) {
+      v.image_prompts = [];
+    } else {
+      if (!Array.isArray(v.image_prompts) || v.image_prompts.length === 0) {
+        throw new Error('invalid_output');
+      }
+      if (v.image_prompts.length > count) {
+        v.image_prompts = v.image_prompts.slice(0, count);
+      } else if (v.image_prompts.length < count) {
+        const last = v.image_prompts[v.image_prompts.length - 1];
+        while (v.image_prompts.length < count) {
+          v.image_prompts.push(last);
+        }
+      }
     }
     if (v.caption.length > channels[v.channel].limit) {
       v.caption = fitCaptionToLimit(v.caption, channels[v.channel].limit);
@@ -192,6 +253,24 @@ export type QuotaAdjustmentLog = {
   reason?: string;
 };
 
+export type QuotaTransaction = {
+  id: string;
+  user_id: string;
+  workspace_id?: string | null;
+  amount: number;
+  balance_before: number;
+  balance_after: number;
+  type: 'ASSIGNMENT' | 'CONSUMPTION' | 'REFUND' | 'ADJUSTMENT';
+  description: string;
+  reason?: string;
+  source?: string;
+  actor_id?: string | null;
+  admin_email?: string;
+  job_id?: string | null;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+};
+
 export type AdminUserDetail = {
   id: string;
   email: string;
@@ -201,6 +280,11 @@ export type AdminUserDetail = {
   status: UserStatus;
   created_at: string;
   last_sign_in_at: string | null;
+  // Content quota system
+  content_quota_balance: number;
+  content_quota_total_assigned: number;
+  content_quota_total_consumed: number;
+  quota_transactions: QuotaTransaction[];
   // Objective usage metrics
   total_generations: number;
   saldo_consumido: number;

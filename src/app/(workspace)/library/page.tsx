@@ -2,6 +2,7 @@ import { context, checked } from '@/lib/security/context';
 import { Library } from '@/features/library/view';
 import type { Asset } from '@/lib/domain';
 import { isSuperAdmin } from '@/lib/security/super-admin';
+import { adminClient } from '@/lib/supabase/server';
 
 export default async function Page({ searchParams }: { searchParams: Promise<{ page?: string }> }) {
   const ctx = await context(),
@@ -13,18 +14,38 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ p
     .order('created_at', { ascending: false })
     .range((page - 1) * 24, page * 24 - 1);
   const items = checked(result) as Asset[];
-  const agents =
-    checked(
-      await ctx.db
-        .from('agents')
-        .select('id,name,visual_settings')
-        .eq('workspace_id', ctx.workspaceId),
-    ) || [];
-  for (const asset of items)
-    asset.url = (await ctx.db.storage.from('brand-assets').createSignedUrl(asset.storage_path, 900))
-      .data?.signedUrl;
-
   const isSuper = isSuperAdmin(ctx.user);
+
+  let agents: Array<{ id: string; name: string; visual_settings: Record<string, unknown> }> = [];
+  if (isSuper) {
+    const res = await adminClient()
+      .from('agents')
+      .select('id,name,visual_settings')
+      .order('name');
+    agents = (res.data || []) as any;
+  } else {
+    const { data: memberWorkspaces } = await ctx.db
+      .from('workspace_members')
+      .select('workspace_id')
+      .eq('user_id', ctx.user.id);
+    const wsIds = (memberWorkspaces || []).map((m) => m.workspace_id);
+    const res = await adminClient()
+      .from('agents')
+      .select('id,name,visual_settings')
+      .in('workspace_id', wsIds.length ? wsIds : [ctx.workspaceId])
+      .order('name');
+    agents = (res.data || []) as any;
+  }
+
+  await Promise.all(
+    items.map(async (asset) => {
+      if (asset.storage_path) {
+        const res = await ctx.db.storage.from('brand-assets').createSignedUrl(asset.storage_path, 900);
+        asset.url = res.data?.signedUrl;
+      }
+    }),
+  );
+
   const [userAssetsResult, profileResult] = await Promise.all([
     ctx.db.from('assets').select('size').eq('created_by', ctx.user.id),
     ctx.db.from('profiles').select('storage_quota_mb').eq('id', ctx.user.id).maybeSingle(),

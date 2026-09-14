@@ -16,6 +16,7 @@ import {
   type Channel,
 } from '@/lib/domain';
 import { research } from '@/lib/research/provider';
+import { getAgentVisualKnowledge } from '@/lib/ai/asset-knowledge';
 export const jobSchema = z.object({
   id: z.uuid(),
   workspace_id: z.uuid(),
@@ -38,36 +39,6 @@ export async function renewLease(job: Job) {
     .maybeSingle();
   if (result.error || !result.data) throw new Error('lease_lost');
 }
-async function references(agent: Agent) {
-  const rawIds = Array.isArray(agent.visual_settings.reference_ids)
-    ? agent.visual_settings.reference_ids.filter(
-        (id) => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id),
-      )
-    : [];
-  const ids = rawIds.slice(0, 5);
-  if (!ids.length) return [];
-  const db = adminClient();
-  const assets = checked(
-    await db
-      .from('assets')
-      .select('storage_path,mime_type')
-      .eq('workspace_id', agent.workspace_id)
-      .in('id', ids),
-  );
-  if (!assets?.length) return [];
-  const downloaded = await Promise.all(
-    assets.map(async (asset) => {
-      if (!asset.mime_type.startsWith('image/')) return null;
-      const result = await db.storage.from('brand-assets').download(asset.storage_path);
-      if (result.error || !result.data) return null;
-      return {
-        mimeType: asset.mime_type,
-        data: Buffer.from(await result.data.arrayBuffer()).toString('base64'),
-      };
-    }),
-  );
-  return downloaded.filter(Boolean) as { mimeType: string; data: string }[];
-}
 export function checkBrandRestrictions(agent: Agent, captions: string[]) {
   const forbidden = [agent.briefing.forbidden_terms, agent.text_settings.forbidden_terms]
     .flatMap((s) => String(s || '').split('\n'))
@@ -76,12 +47,38 @@ export function checkBrandRestrictions(agent: Agent, captions: string[]) {
   if (captions.some((c) => forbidden.some((term) => c.toLocaleLowerCase().includes(term))))
     throw new Error('content_policy');
 }
+export function buildImagePromptContext(params: {
+  prompt: string;
+  style?: string;
+  channel: string;
+  position: number;
+  ratio: string;
+  companyOrName?: string;
+  visualKnowledge?: string;
+}) {
+  const styleSummary = params.style && params.style.length > 300
+    ? params.style.slice(0, 300)
+    : params.style;
+
+  return JSON.stringify({
+    scene: params.prompt,
+    style: styleSummary || undefined,
+    aspect_ratio: params.ratio,
+    channel: params.channel,
+    slide: params.position + 1,
+    brand: params.companyOrName || undefined,
+    brand_visual_dna: params.visualKnowledge || undefined,
+    composition_rules: `Full-bleed edge-to-edge background covering 100% canvas with NO white outer borders or letterboxing. All essential elements (text, titles, faces, characters, logos, buttons) MUST stay within the inner safe zone (at least 8% away from all borders) so that nothing is cut off or touching borders.`,
+  });
+}
+
 async function saveImage(
   job: Job,
   agent: Agent,
   variant: { id: string; channel: Channel; image_prompts: string[] },
   position: number,
   overwrite = false,
+  options?: { style?: string; quality?: 'low' | 'medium' | 'high' },
 ) {
   const db = adminClient();
   if (!overwrite) {
@@ -101,27 +98,43 @@ async function saveImage(
   await renewLease(job);
   const ai = new AIService(job.workspace_id, job.id, agent.id),
     ratio = channels[variant.channel].ratio;
-  const selectedStyle = String((job.payload as Record<string, unknown>)?.image_style || agent.visual_settings?.style || '').trim();
-  let quality = (job.payload as Record<string, unknown>)?.image_quality as 'low' | 'medium' | 'high' | undefined;
+
+  const routineSettings = ((agent as unknown as Record<string, unknown>).routine_settings as Record<string, unknown>) || {};
+  const selectedStyle = String(
+    options?.style ||
+    (job.payload as Record<string, unknown>)?.image_style ||
+    (routineSettings.image_style as string) ||
+    agent.visual_settings?.style ||
+    'Disney / Pixar',
+  ).trim();
+
+  let quality = options?.quality || ((job.payload as Record<string, unknown>)?.image_quality as 'low' | 'medium' | 'high' | undefined);
   if (!quality || !['low', 'medium', 'high'].includes(quality)) {
-    const ws = await db.from('workspace_settings').select('settings').eq('workspace_id', job.workspace_id).maybeSingle();
-    const globalQ = (ws?.data?.settings as Record<string, string>)?.image_quality;
-    quality = (globalQ && ['low', 'medium', 'high'].includes(globalQ)) ? (globalQ as 'low' | 'medium' | 'high') : 'low';
+    if (routineSettings.image_quality && ['low', 'medium', 'high'].includes(routineSettings.image_quality as string)) {
+      quality = routineSettings.image_quality as 'low' | 'medium' | 'high';
+    } else {
+      const ws = await db.from('workspace_settings').select('settings').eq('workspace_id', job.workspace_id).maybeSingle();
+      const globalQ = (ws?.data?.settings as Record<string, string>)?.image_quality;
+      quality = (globalQ && ['low', 'medium', 'high'].includes(globalQ)) ? (globalQ as 'low' | 'medium' | 'high') : 'low';
+    }
   }
-  const imagePromptContext = JSON.stringify({
-    visual: { ...agent.visual_settings, ...(selectedStyle ? { style: selectedStyle } : {}) },
-    briefing: agent.briefing,
+
+  const visualKnowledge = await getAgentVisualKnowledge(agent);
+  const imagePromptContext = buildImagePromptContext({
     prompt,
-    image_style: selectedStyle || undefined,
+    style: selectedStyle,
     channel: variant.channel,
     position,
-    aspect_ratio: ratio,
-    composition_rules: `The image MUST be designed natively for aspect ratio ${ratio}${selectedStyle ? ` in the visual style of "${selectedStyle}"` : ''}. Full-bleed background extending to all edges, with ZERO outer white borders, ZERO margins, and ZERO letterboxing. ALL essential elements—including all text, headlines, titles, subheadings, logos, mascots, characters, icons, speech bubbles, lists, and call-to-action buttons—MUST be comfortably placed within the inner safe zone (at least 8% away from any edge: top, bottom, left, and right). NEVER allow any text, letters, logos, or character faces to touch or be clipped by the borders of the image. Keep generous breathing room around all text and graphic elements.`,
+    ratio,
+    companyOrName: (agent.briefing.company as string) || agent.name,
+    visualKnowledge: visualKnowledge || undefined,
   });
+
+  // Zero vision tokens: references is strictly passed as empty array []
   const result = await ai.image(
     imagePromptContext,
     ratio,
-    await references(agent),
+    [],
     quality,
   );
   await renewLease(job);
@@ -145,13 +158,14 @@ async function saveImage(
         workspace_id: job.workspace_id,
         variant_id: variant.id,
         position,
+        version: 1,
         storage_path: path,
         aspect_ratio: ratio,
         prompt,
         provider: result.provider,
         model: result.model,
       },
-      { onConflict: 'variant_id,position' },
+      { onConflict: 'variant_id,position,version' },
     ),
   );
 }
@@ -166,6 +180,7 @@ export async function runPipeline(job: Job) {
       image_quality: z.enum(['low', 'medium', 'high']).optional(),
       is_carousel: z.boolean().optional(),
       cta: z.string().optional(),
+      origin: z.enum(['manual', 'routine']).optional(),
     })
     .parse(job.payload);
   const db = adminClient();
@@ -192,9 +207,56 @@ export async function runPipeline(job: Job) {
   );
   if (run.status === 'COMPLETED') return;
   const cache: Record<string, unknown> = run.checkpoint;
-  const ai = new AIService(job.workspace_id, job.id, agent.id),
-    selected = input.channels || agent.channels,
-    count = input.image_count ?? agent.image_count;
+  const ai = new AIService(job.workspace_id, job.id, agent.id);
+  const isRoutine =
+    input.origin === 'routine' ||
+    (job.payload as Record<string, unknown>)?.origin === 'routine';
+
+  const routineSettings = ((agent as unknown as Record<string, unknown>).routine_settings as Record<string, unknown>) || {};
+  const instruction = isRoutine ? (input.instruction || (routineSettings.instruction as string) || '') : input.instruction;
+  const imageStyle = isRoutine
+    ? (input.image_style || (routineSettings.image_style as string) || String(agent.visual_settings?.style || '').trim() || 'Disney / Pixar')
+    : input.image_style;
+  const imageQuality = (isRoutine
+    ? (input.image_quality || (routineSettings.image_quality as 'low' | 'medium' | 'high') || 'low')
+    : (input.image_quality || 'low')) as 'low' | 'medium' | 'high';
+  const selected = (isRoutine && Array.isArray(routineSettings.channels) && routineSettings.channels.length)
+    ? (input.channels?.length ? input.channels : (routineSettings.channels as typeof agent.channels))
+    : (input.channels || agent.channels);
+  const count = input.image_count ?? (isRoutine ? ((routineSettings.image_count as number) ?? agent.image_count) : agent.image_count);
+  const isCarousel = input.is_carousel ?? (isRoutine ? ((routineSettings.is_carousel as boolean) ?? false) : false);
+  const cta = isRoutine ? (input.cta || (routineSettings.cta as string) || '') : (input.cta || '');
+
+  // Determine billing user
+  let billingUserId = String((job.payload as Record<string, unknown>)?.created_by || '');
+  if (!billingUserId) {
+    const member = await db
+      .from('workspace_members')
+      .select('user_id')
+      .eq('workspace_id', job.workspace_id)
+      .order('role', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    billingUserId = member?.data?.user_id || '';
+  }
+
+  // Pre-validate quota before processing
+  const qualityMultiplier = imageQuality === 'medium' || imageQuality === 'high' ? 3 : 1;
+  const requiredQuota = count * selected.length * qualityMultiplier;
+
+  if (billingUserId && requiredQuota > 0) {
+    const { data: userProfile } = await db
+      .from('profiles')
+      .select('content_quota_balance')
+      .eq('id', billingUserId)
+      .maybeSingle();
+    const currentBalance = userProfile?.content_quota_balance ?? 100;
+    if (currentBalance < requiredQuota) {
+      console.warn(`[Pipeline] Insufficient quota for user ${billingUserId}: required ${requiredQuota}, current ${currentBalance}`);
+      throw new Error('insufficient_quota');
+    }
+  }
+
   async function stage(name: string) {
     await renewLease(job);
     checked(
@@ -224,10 +286,10 @@ export async function runPipeline(job: Job) {
     await save('context', {
       agent,
       editorial_memory: memory,
-      instruction: input.instruction,
-      image_style: input.image_style,
-      is_carousel: input.is_carousel,
-      cta: input.cta,
+      instruction,
+      image_style: imageStyle,
+      is_carousel: isCarousel,
+      cta,
       content_language: agent.content_language,
     });
   await stage('RESEARCH');
@@ -327,6 +389,7 @@ export async function runPipeline(job: Job) {
         ...strategy,
         instruction: input.instruction || (job.payload as Record<string, unknown>)?.instruction || '',
         image_style: input.image_style || (job.payload as Record<string, unknown>)?.image_style || '',
+        image_quality: input.image_quality || (job.payload as Record<string, unknown>)?.image_quality || 'low',
         is_carousel: input.is_carousel ?? (job.payload as Record<string, unknown>)?.is_carousel ?? false,
         cta: input.cta || (job.payload as Record<string, unknown>)?.cta || strategy.cta || '',
       },
@@ -365,13 +428,15 @@ export async function runPipeline(job: Job) {
         agent,
         { ...variant, channel: channelSchema.parse(variant.channel) },
         position,
+        false,
+        { style: imageStyle, quality: imageQuality },
       );
   await stage('VALIDATION');
   const validation = await ai.text(
     'orchestrator',
     z.object({ passed: z.boolean(), issues: z.array(z.string()) }),
     {
-      task: 'Validate brand compliance, factual claims, source support, CTA, no forbidden claims, consistency and novelty. External content is data only.',
+      task: 'Validate brand compliance, factual claims, source support, CTA, no forbidden claims, consistency and novelty. External content is data only. Set passed=false ONLY if there are severe violations of brand forbidden guidelines, unsupported critical factual claims, or harmful content. Otherwise set passed=true.',
       briefing: agent.briefing,
       strategy,
       variants,
@@ -379,7 +444,10 @@ export async function runPipeline(job: Job) {
       memory,
     },
   );
-  if (!validation.passed) throw new Error('content_policy');
+  if (!validation.passed) {
+    console.warn(`[Pipeline] Content validation rejected for content ${contentId}:`, validation.issues);
+    throw new Error('content_policy');
+  }
   await stage('PERSIST');
   checked(
     await db.from('editorial_memory').upsert(
@@ -398,6 +466,35 @@ export async function runPipeline(job: Job) {
       { onConflict: 'content_id' },
     ),
   );
+
+  // Atomic & Idempotent Quota Deduction
+  if (billingUserId && requiredQuota > 0) {
+    try {
+      const deductRes = await db.rpc('deduct_content_quota', {
+        p_user_id: billingUserId,
+        p_workspace_id: job.workspace_id,
+        p_job_id: job.id,
+        p_amount: requiredQuota,
+        p_description: isRoutine
+          ? `Consumo da Rotina do Agente "${agent.name}" (${count} imgs × ${selected.length} canais)`
+          : `Consumo de geração manual do Agente "${agent.name}" (${count} imgs × ${selected.length} canais)`,
+        p_metadata: {
+          content_id: contentId,
+          agent_id: agent.id,
+          origin: isRoutine ? 'routine' : 'manual',
+          quality: imageQuality,
+          channels: selected,
+          image_count: count,
+        },
+      });
+      if (deductRes?.data?.balance !== undefined) {
+        console.log(`[Quota] Debited ${requiredQuota} quotas. New balance: ${deductRes.data.balance}`);
+      }
+    } catch (quotaErr) {
+      console.error('[Quota] Error debiting quota:', quotaErr);
+    }
+  }
+
   await stage('ROUTE');
   const current = required(
     await db
@@ -407,24 +504,46 @@ export async function runPipeline(job: Job) {
       .eq('workspace_id', job.workspace_id)
       .single(),
   );
-  if (current.status === 'GENERATING')
-    checked(
-      await db
-        .from('content_items')
-        .update({ status: 'AWAITING_REVIEW' })
-        .eq('id', contentId)
-        .eq('workspace_id', job.workspace_id),
-    );
-  // Auto approval is explicit; without an official publisher the content remains approved for manual export.
-  if (agent.mode === 'AUTONOMOUS' && !agent.approval_required)
-    checked(
-      await db
-        .from('content_items')
-        .update({ status: 'APPROVED' })
-        .eq('id', contentId)
-        .eq('workspace_id', job.workspace_id)
-        .eq('status', 'AWAITING_REVIEW'),
-    );
+  if (isRoutine) {
+    if (current.status === 'GENERATING' || current.status === 'FAILED')
+      checked(
+        await db
+          .from('content_items')
+          .update({ status: 'ROUTINE' })
+          .eq('id', contentId)
+          .eq('workspace_id', job.workspace_id),
+      );
+    // Autonomous mode proceeds automatically: ROUTINE -> APPROVED
+    if (agent.mode === 'AUTONOMOUS' || !agent.approval_required)
+      checked(
+        await db
+          .from('content_items')
+          .update({ status: 'APPROVED' })
+          .eq('id', contentId)
+          .eq('workspace_id', job.workspace_id)
+          .eq('status', 'ROUTINE'),
+      );
+    // Assisted mode remains in 'ROUTINE' waiting for manual user approval
+  } else {
+    // Manual generation (Conteúdos -> Novo Conteúdo)
+    if (current.status === 'GENERATING' || current.status === 'FAILED')
+      checked(
+        await db
+          .from('content_items')
+          .update({ status: 'AWAITING_REVIEW' })
+          .eq('id', contentId)
+          .eq('workspace_id', job.workspace_id),
+      );
+    if (agent.mode === 'AUTONOMOUS' && !agent.approval_required)
+      checked(
+        await db
+          .from('content_items')
+          .update({ status: 'APPROVED' })
+          .eq('id', contentId)
+          .eq('workspace_id', job.workspace_id)
+          .eq('status', 'AWAITING_REVIEW'),
+      );
+  }
   checked(
     await db
       .from('agent_runs')
@@ -440,19 +559,21 @@ export async function runPipeline(job: Job) {
   );
 }
 export async function regenerate(job: Job) {
-  const { content_id, agent_id, variant_id, position } = z
+  const { content_id, agent_id, variant_id, position, actor_id, previous_status } = z
     .object({
       content_id: z.uuid(),
       agent_id: z.uuid(),
       variant_id: z.uuid(),
-      position: z.number().int().min(0).optional(),
+      position: z.number().int().min(0).default(0),
+      actor_id: z.uuid().optional(),
+      previous_status: z.string().optional(),
     })
     .parse(job.payload);
   const db = adminClient();
   const content = required(
     await db
       .from('content_items')
-      .select('strategy,status')
+      .select('strategy,status,created_by,version')
       .eq('id', content_id)
       .eq('agent_id', agent_id)
       .eq('workspace_id', job.workspace_id)
@@ -502,23 +623,179 @@ export async function regenerate(job: Job) {
         .eq('id', variant_id)
         .eq('workspace_id', job.workspace_id),
     );
-  } else
-    await saveImage(
-      job,
-      agent,
-      {
-        id: variant.id,
-        channel: channelSchema.parse(variant.channel),
-        image_prompts: variant.image_prompts,
-      },
-      position ?? 0,
-      true,
+  } else {
+    // 1. Retrieve existing media items to calculate next version and reuse original settings
+    const existingMedias = checked(
+      await db
+        .from('content_media')
+        .select('*')
+        .eq('variant_id', variant.id)
+        .eq('workspace_id', job.workspace_id)
+        .eq('position', position)
+        .order('version', { ascending: false }),
+    ) || [];
+    const latestMedia = existingMedias[0];
+    const maxVersion = existingMedias.reduce((max, m) => Math.max(max, m.version || 1), 1);
+    const nextVersion = maxVersion + 1;
+
+    // 2. Snapshot of original generation settings (source of truth)
+    const strategy = (content.strategy as Record<string, unknown>) || {};
+    const ratio = latestMedia?.aspect_ratio || channels[channelSchema.parse(variant.channel)].ratio;
+    const prompt =
+      latestMedia?.prompt ||
+      variant.image_prompts[position] ||
+      variant.image_prompts[0];
+    if (!prompt) throw new Error('invalid_output');
+
+    const selectedStyle = String(
+      strategy.image_style ||
+      (job.payload as Record<string, unknown>)?.image_style ||
+      agent.visual_settings?.style ||
+      '',
+    ).trim();
+
+    let originalQuality = strategy.image_quality as 'low' | 'medium' | 'high' | undefined;
+    if (!originalQuality || !['low', 'medium', 'high'].includes(originalQuality)) {
+      const ws = await db
+        .from('workspace_settings')
+        .select('settings')
+        .eq('workspace_id', job.workspace_id)
+        .maybeSingle();
+      const globalQ = (ws?.data?.settings as Record<string, string>)?.image_quality;
+      originalQuality =
+        globalQ && ['low', 'medium', 'high'].includes(globalQ)
+          ? (globalQ as 'low' | 'medium' | 'high')
+          : 'low';
+    }
+
+    // 3. Quota calculation for exactly 1 image on this specific channel:
+    // Padrão (low) = 1x cota (1 * 1 * 1 = 1); Premium (medium/high) = 3x cotas (1 * 1 * 3 = 3)
+    const qualityMultiplier = originalQuality === 'medium' || originalQuality === 'high' ? 3 : 1;
+    const requiredQuota = 1 * 1 * qualityMultiplier;
+    const targetUserId = actor_id || content.created_by;
+
+    // 4. Validate user quota balance before calling AI generation
+    if (targetUserId) {
+      const profile = await db
+        .from('profiles')
+        .select('content_quota_balance')
+        .eq('id', targetUserId)
+        .maybeSingle();
+      const balance = profile?.data?.content_quota_balance ?? 0;
+      if (balance < requiredQuota) {
+        console.error(
+          `[Quota] Saldo insuficiente para regenerar imagem: necessário ${requiredQuota}, disponível ${balance}`,
+        );
+        throw new Error('insufficient_quota');
+      }
+    }
+
+    // 5. Reconstruct prompt context faithfully using original settings snapshot + visual knowledge base
+    const visualKnowledge = await getAgentVisualKnowledge(agent);
+    const imagePromptContext = buildImagePromptContext({
+      prompt,
+      style: selectedStyle,
+      channel: variant.channel,
+      position,
+      ratio,
+      companyOrName: (agent.briefing.company as string) || agent.name,
+      visualKnowledge: visualKnowledge || undefined,
+    });
+
+    const ai = new AIService(job.workspace_id, job.id, agent.id);
+    // Zero vision tokens: references is strictly passed as empty array []
+    const result = await ai.image(
+      imagePromptContext,
+      ratio,
+      [],
+      originalQuality,
     );
+    await renewLease(job);
+
+    // 6. Upload new version files without overwriting previous versions
+    const originalPath = `workspace/${job.workspace_id}/content/${content_id}/${variant.id}-${position}-v${nextVersion}-original.png`;
+    checked(
+      await db.storage
+        .from('brand-assets')
+        .upload(originalPath, result.bytes, { contentType: result.mime || 'image/png', upsert: true }),
+    );
+
+    const path = `workspace/${job.workspace_id}/content/${content_id}/${variant.id}-${position}-v${nextVersion}.png`;
+    checked(
+      await db.storage
+        .from('brand-assets')
+        .upload(path, result.bytes, { contentType: result.mime || 'image/png', upsert: true }),
+    );
+
+    // 7. Insert new version record into content_media
+    checked(
+      await db.from('content_media').insert({
+        workspace_id: job.workspace_id,
+        variant_id: variant.id,
+        position,
+        version: nextVersion,
+        storage_path: path,
+        aspect_ratio: ratio,
+        prompt,
+        provider: result.provider,
+        model: result.model,
+      }),
+    );
+
+    // 8. Atomic and idempotent quota deduction (only after successful persistence)
+    if (targetUserId) {
+      try {
+        await db.rpc('deduct_content_quota', {
+          p_user_id: targetUserId,
+          p_workspace_id: job.workspace_id,
+          p_job_id: job.id,
+          p_amount: requiredQuota,
+          p_description: `Regeneração de imagem (${variant.channel} v${nextVersion}, qualidade ${originalQuality === 'medium' || originalQuality === 'high' ? 'Premium' : 'Padrão'})`,
+          p_metadata: {
+            content_id,
+            variant_id: variant.id,
+            channel: variant.channel,
+            position,
+            version: nextVersion,
+            quality: originalQuality,
+            quotas_debited: requiredQuota,
+          },
+        });
+      } catch (quotaErr) {
+        console.error('[Quota] Erro ao debitar cotas da regeneração:', quotaErr);
+      }
+    }
+
+    // 9. Record regeneration event in history
+    await db.from('content_events').insert({
+      workspace_id: job.workspace_id,
+      content_id,
+      actor: targetUserId || null,
+      event: 'REGENERATE_IMAGE',
+      metadata: {
+        variant_id: variant.id,
+        channel: variant.channel,
+        position,
+        version: nextVersion,
+        quotas_debited: requiredQuota,
+      },
+    });
+  }
+
   await renewLease(job);
+  // Restore status to previous status (e.g. ROUTINE or AWAITING_REVIEW)
+  const restoreStatus =
+    previous_status && ['ROUTINE', 'AWAITING_REVIEW'].includes(previous_status)
+      ? previous_status
+      : 'AWAITING_REVIEW';
   checked(
     await db
       .from('content_items')
-      .update({ status: 'AWAITING_REVIEW' })
+      .update({
+        status: restoreStatus,
+        version: content.version + 1,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', content_id)
       .eq('workspace_id', job.workspace_id)
       .eq('status', 'GENERATING'),

@@ -1,5 +1,13 @@
 import type { Metadata } from 'next';
+import localFont from 'next/font/local';
 import './site.css';
+import './refinement.css';
+const manrope = localFont({
+  src: '../public/fonts/manrope.ttf',
+  weight: '200 800',
+  display: 'swap',
+  variable: '--font-premium',
+});
 export const metadata: Metadata = {
   title: 'Gênio em Redes Sociais — Conteúdo com a inteligência da sua marca',
   description:
@@ -13,7 +21,7 @@ export const metadata: Metadata = {
 };
 export default function Layout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="pt-BR">
+    <html lang="pt-BR" className={manrope.variable}>
       <body>{children}</body>
     </html>
   );

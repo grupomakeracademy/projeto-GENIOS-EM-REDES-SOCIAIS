@@ -34,6 +34,7 @@ import { channels, statuses, type Agent, type Content, type Channel, QUALITY_MUL
 import { useGenerationRuns, RunCard } from './queue';
 import { ContentExecutionCard } from './cards';
 import { AgentFilter } from '@/components/agent-filter';
+import { ContentFormModal } from './modal';
 const ALL_CHANNELS: Channel[] = ['instagram', 'facebook', 'whatsapp', 'tiktok', 'x', 'linkedin'];
 const subscribeView = (callback: () => void) => {
   window.addEventListener('storage', callback);
@@ -244,13 +245,15 @@ function KanbanBoard({
                     <FileText size={22} className="kanban-empty-icon" />
                     <strong>Nenhum conteúdo nesta página</strong>
                     <span>
-                      {s === 'GENERATING'
-                        ? 'Os conteúdos que estiverem sendo gerados aparecerão aqui.'
-                        : s === 'AWAITING_REVIEW'
-                          ? 'Os conteúdos aguardando revisão aparecerão aqui.'
-                          : s === 'SCHEDULED'
-                            ? 'Os conteúdos agendados aparecerão aqui.'
-                            : 'Nenhum conteúdo neste status no momento.'}
+                      {s === 'ROUTINE'
+                        ? 'Os conteúdos gerados por rotina aguardando aprovação aparecerão aqui.'
+                        : s === 'GENERATING'
+                          ? 'Os conteúdos que estiverem sendo gerados aparecerão aqui.'
+                          : s === 'AWAITING_REVIEW'
+                            ? 'Os conteúdos aguardando revisão aparecerão aqui.'
+                            : s === 'SCHEDULED'
+                              ? 'Os conteúdos agendados aparecerão aqui.'
+                              : 'Nenhum conteúdo neste status no momento.'}
                     </span>
                   </div>
                 )}
@@ -322,110 +325,10 @@ export function ContentList({
     router = useRouter(),
     params = useSearchParams(),
     action = useAction(),
-    [createOpen, setCreateOpen] = useState(params.get('new') === '1'),
-    [selected, setSelected] = useState(params.get('agent') || agents[0]?.id || ''),
-    [selectedChannels, setChannels] = useState<Channel[]>(
-      (agents.find((a) => a.id === params.get('agent')) || agents[0])?.channels?.length
-        ? (agents.find((a) => a.id === params.get('agent')) || agents[0])!.channels
-        : ALL_CHANNELS,
-    ),
-    [imageStyle, setImageStyle] = useState('Disney / Pixar'),
-    [imageQuality, setImageQuality] = useState<'low' | 'medium'>(
-      defaultImageQuality === 'medium' ? 'medium' : 'low',
-    ),
-    [instruction, setInstruction] = useState(''),
-    [imageCount, setImageCount] = useState(2),
-    [isCarousel, setIsCarousel] = useState(true),
-    [cta, setCta] = useState(''),
-    [savingDraft, setSavingDraft] = useState(false),
-    [pautaMagicUsed, setPautaMagicUsed] = useState(false),
-    [pautaBusy, setPautaBusy] = useState(false),
-    [ctaMagicUsed, setCtaMagicUsed] = useState(false),
-    [ctaBusy, setCtaBusy] = useState(false),
-    [magicError, setMagicError] = useState('');
+    [createOpen, setCreateOpen] = useState(params.get('new') === '1');
 
   function openCreateModal() {
-    const agent = agents.find((a) => a.id === params.get('agent'));
-    if (agent) {
-      setSelected(agent.id);
-      if (agent.channels?.length) setChannels(agent.channels);
-    }
-    setPautaMagicUsed(false);
-    setCtaMagicUsed(false);
-    setPautaBusy(false);
-    setCtaBusy(false);
-    setMagicError('');
-    setSavingDraft(false);
     setCreateOpen(true);
-  }
-
-  async function handleMagicPauta() {
-    if (!instruction.trim() || pautaMagicUsed || pautaBusy) return;
-    setPautaBusy(true);
-    setMagicError('');
-    try {
-      const res = await api('ai/magic-prompt', 'POST', {
-        text: instruction.trim(),
-        type: 'instruction',
-        agent_id: selected,
-      });
-      if (res?.refinedText) {
-        setInstruction(res.refinedText);
-        setPautaMagicUsed(true);
-      }
-    } catch (e) {
-      setMagicError(e instanceof Error ? e.message : 'Falha ao executar Prompt Mágico');
-    } finally {
-      setPautaBusy(false);
-    }
-  }
-
-  async function handleMagicCta() {
-    if (!cta.trim() || ctaMagicUsed || ctaBusy) return;
-    setCtaBusy(true);
-    setMagicError('');
-    try {
-      const res = await api('ai/magic-prompt', 'POST', {
-        text: cta.trim(),
-        type: 'cta',
-        agent_id: selected,
-      });
-      if (res?.refinedText) {
-        setCta(res.refinedText);
-        setCtaMagicUsed(true);
-      }
-    } catch (e) {
-      setMagicError(e instanceof Error ? e.message : 'Falha ao executar Prompt Mágico');
-    } finally {
-      setCtaBusy(false);
-    }
-  }
-
-  async function handleSaveDraft() {
-    if (savingDraft || action.busy || !selected || selectedChannels.length === 0) return;
-    setSavingDraft(true);
-    setMagicError('');
-    try {
-      await api('content', 'POST', {
-        agent_id: selected,
-        instruction: instruction.trim(),
-        image_style: imageStyle,
-        is_carousel: isCarousel,
-        cta: cta.trim(),
-        channels: selectedChannels,
-        image_count: Number(imageCount),
-        image_quality: imageQuality,
-        status: 'DRAFT',
-      });
-      setRevision((v) => v + 1);
-      setCreateOpen(false);
-      router.push(`/contents?status=DRAFT&agent=${selected}`);
-      router.refresh();
-    } catch (e) {
-      setMagicError(e instanceof Error ? e.message : 'Falha ao salvar rascunho');
-    } finally {
-      setSavingDraft(false);
-    }
   }
   const network = params.get('network') || '';
   const [revision, setRevision] = useState(0);
@@ -612,306 +515,25 @@ export function ContentList({
           </Button>
         </div>
       ) : null}
-      {createOpen ? (
-        <Modal
-          title="Novo conteúdo"
-          subtitle="Configure os detalhes para gerar seu conteúdo."
-          icon={<Sparkles size={20} className="modal-sparkle-icon" />}
-          className="modal-new-content"
-          onClose={() => setCreateOpen(false)}
-        >
-          <form
-            className="new-content-form"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void action.act(async () => {
-                await api('runs', 'POST', {
-                  agent_id: selected,
-                  instruction: instruction.trim(),
-                  image_style: imageStyle,
-                  is_carousel: isCarousel,
-                  cta: cta.trim(),
-                  channels: selectedChannels,
-                  image_count: Number(imageCount),
-                  image_quality: imageQuality,
-                  idempotency_key: crypto.randomUUID(),
-                });
-                setRevision((v) => v + 1);
-                setCreateOpen(false);
-                router.push(`/contents?status=GENERATING&agent=${selected}`);
-                router.refresh();
-              }, 'enqueued');
-            }}
-          >
-            <div className="new-content-field">
-              <label className="new-content-label">Agentes</label>
-              <div className="new-content-input-wrapper">
-                <Users size={18} className="field-prefix-icon" />
-                <select
-                  value={selected}
-                  required
-                  onChange={(e) => {
-                    setSelected(e.target.value);
-                    const agent = agents.find((a) => a.id === e.target.value);
-                    if (agent?.channels?.length) setChannels(agent.channels);
-                  }}
-                >
-                  {agents.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="new-content-field">
-              <label className="new-content-label">Estilo da Imagem *</label>
-              <div className="new-content-input-wrapper">
-                <Palette size={18} className="field-prefix-icon" />
-                <select
-                  value={imageStyle}
-                  required
-                  onChange={(e) => setImageStyle(e.target.value)}
-                >
-                  <option value="Disney / Pixar">Disney / Pixar</option>
-                  <option value="3D Cartoon Moderno">3D Cartoon Moderno</option>
-                  <option value="Fotorealista / Ultra-realista">Fotorealista / Ultra-realista</option>
-                  <option value="Minimalista / Editorial">Minimalista / Editorial</option>
-                  <option value="Ilustração Digital / Vetorial">Ilustração Digital / Vetorial</option>
-                  <option value="Cyberpunk / Futurista">Cyberpunk / Futurista</option>
-                  <option value="Anime / Mangá Japonês">Anime / Mangá Japonês</option>
-                  <option value="Vintage / Retrô Clássico">Vintage / Retrô Clássico</option>
-                  <option value="Pintura a Óleo / Belas Artes">Pintura a Óleo / Belas Artes</option>
-                  <option value="Flat Design Corporativo">Flat Design Corporativo</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="new-content-field">
-              <div className="field-label-with-action">
-                <label className="new-content-label">Pauta / instrução opcional</label>
-                {pautaMagicUsed ? (
-                  <span className="magic-prompt-badge-used">✓ Prompt Mágico utilizado</span>
-                ) : (
-                  <button
-                    type="button"
-                    className="magic-prompt-btn"
-                    disabled={!instruction.trim() || pautaBusy}
-                    onClick={handleMagicPauta}
-                    title={
-                      !instruction.trim()
-                        ? 'Escreva algo na pauta para habilitar o Prompt Mágico'
-                        : 'Melhorar e organizar com IA'
-                    }
-                  >
-                    <Sparkles size={13} className={pautaBusy ? 'spin-icon' : ''} />
-                    <span>{pautaBusy ? 'Melhorando...' : 'Prompt Mágico'}</span>
-                  </button>
-                )}
-              </div>
-              <div className="new-content-textarea-wrapper">
-                <FileText size={18} className="textarea-prefix-icon" />
-                <textarea
-                  name="instruction"
-                  value={instruction}
-                  onChange={(e) => setInstruction(e.target.value)}
-                  placeholder="Descreva a ideia, tema ou instruções para as imagens..."
-                  maxLength={10000}
-                  rows={3}
-                />
-              </div>
-            </div>
-
-            <div className="new-content-field">
-              <div className="channel-section-header">
-                <label className="new-content-label">Canais de publicação</label>
-                <p className="new-content-sublabel">
-                  Escolha em quais redes sociais gerar as imagens e o formato ideal para cada uma.
-                </p>
-              </div>
-              <div className="new-content-channels-grid">
-                {ALL_CHANNELS.map((ch) => {
-                  const isChecked = selectedChannels.includes(ch);
-                  return (
-                    <div
-                      key={ch}
-                      className={`new-content-channel-card ${isChecked ? 'selected' : ''}`}
-                      role="checkbox"
-                      aria-checked={isChecked}
-                      tabIndex={0}
-                      onClick={() =>
-                        setChannels((prev) =>
-                          prev.includes(ch) ? prev.filter((v) => v !== ch) : [...prev, ch],
-                        )
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === ' ' || e.key === 'Enter') {
-                          e.preventDefault();
-                          setChannels((prev) =>
-                            prev.includes(ch) ? prev.filter((v) => v !== ch) : [...prev, ch],
-                          );
-                        }
-                      }}
-                    >
-                      <div className="channel-card-logo">
-                        <SocialLogo channel={ch} size={32} />
-                      </div>
-                      <div className="channel-card-info">
-                        <strong className="channel-card-name">{channels[ch].name}</strong>
-                        <span className="channel-card-ratio">{channels[ch].ratio}</span>
-                      </div>
-                      <div className={`channel-card-checkbox ${isChecked ? 'checked' : ''}`}>
-                        {isChecked && <Check size={14} strokeWidth={3} />}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="new-content-field">
-              <label className="new-content-label">Qualidade da Imagem</label>
-              <div className="quality-segmented-control">
-                <button
-                  type="button"
-                  className={`quality-pill ${imageQuality === 'low' ? 'active' : ''}`}
-                  onClick={() => setImageQuality('low')}
-                >
-                  <span className="quality-pill-name">Padrão</span>
-                  <span className="quality-pill-multiplier">1x cota</span>
-                </button>
-                <button
-                  type="button"
-                  className={`quality-pill ${imageQuality === 'medium' ? 'active' : ''}`}
-                  onClick={() => setImageQuality('medium')}
-                >
-                  <span className="quality-pill-name">Premium</span>
-                  <span className="quality-pill-multiplier">3x cota</span>
-                </button>
-              </div>
-            </div>
-
-            <div className="new-content-field">
-              <label className="new-content-label">Imagens por canal</label>
-              <div className="image-count-stepper-row">
-                <div className="image-count-stepper">
-                  <button
-                    type="button"
-                    className="stepper-btn"
-                    disabled={imageCount <= 1}
-                    onClick={() => setImageCount((prev) => Math.max(1, prev - 1))}
-                    aria-label="Diminuir imagens"
-                  >
-                    <Minus size={16} />
-                  </button>
-                  <span className="stepper-value">{imageCount}</span>
-                  <button
-                    type="button"
-                    className="stepper-btn"
-                    disabled={imageCount >= 6}
-                    onClick={() => setImageCount((prev) => Math.min(6, prev + 1))}
-                    aria-label="Aumentar imagens"
-                  >
-                    <Plus size={16} />
-                  </button>
-                </div>
-                <div className="total-consumption-badge">
-                  <span>
-                    o total de conteúdos consumidos será <strong>{imageCount * selectedChannels.length * (QUALITY_MULTIPLIERS[imageQuality] ?? 1)}</strong>
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="new-content-carousel-row">
-              <div className="carousel-toggle-label">
-                <Layers size={18} className="carousel-icon" />
-                <span>É carrossel?</span>
-              </div>
-              <div className="carousel-segmented-control">
-                <button
-                  type="button"
-                  className={`carousel-pill ${isCarousel ? 'active' : ''}`}
-                  onClick={() => setIsCarousel(true)}
-                >
-                  Sim
-                </button>
-                <button
-                  type="button"
-                  className={`carousel-pill ${!isCarousel ? 'active' : ''}`}
-                  onClick={() => setIsCarousel(false)}
-                >
-                  Não
-                </button>
-              </div>
-            </div>
-
-            <div className="new-content-field">
-              <div className="field-label-with-action">
-                <label className="new-content-label">CTA</label>
-                {ctaMagicUsed ? (
-                  <span className="magic-prompt-badge-used">✓ Prompt Mágico utilizado</span>
-                ) : (
-                  <button
-                    type="button"
-                    className="magic-prompt-btn"
-                    disabled={!cta.trim() || ctaBusy}
-                    onClick={handleMagicCta}
-                    title={
-                      !cta.trim()
-                        ? 'Escreva uma chamada para ação para habilitar o Prompt Mágico'
-                        : 'Melhorar CTA com IA'
-                    }
-                  >
-                    <Sparkles size={13} className={ctaBusy ? 'spin-icon' : ''} />
-                    <span>{ctaBusy ? 'Melhorando...' : 'Prompt Mágico'}</span>
-                  </button>
-                )}
-              </div>
-              <div className="new-content-input-wrapper">
-                <MousePointerClick size={18} className="field-prefix-icon" />
-                <input
-                  type="text"
-                  value={cta}
-                  onChange={(e) => setCta(e.target.value)}
-                  placeholder="Ex.: Saiba mais, Garanta o seu, Acesse agora..."
-                  maxLength={500}
-                />
-              </div>
-            </div>
-
-            {magicError && <Notice message={magicError} error />}
-            <Notice {...action} />
-
-            <div className="new-content-modal-footer">
-              <button
-                type="button"
-                className="btn-save-draft"
-                disabled={action.busy || savingDraft || !selected || selectedChannels.length === 0}
-                onClick={handleSaveDraft}
-              >
-                <FileText size={16} />
-                <span>{savingDraft ? 'Salvando...' : 'Salvar como rascunho'}</span>
-              </button>
-              <div className="modal-footer-right">
-                <Button secondary type="button" onClick={() => setCreateOpen(false)}>
-                  Cancelar
-                </Button>
-                <Button
-                  className="btn-generate-gradient"
-                  disabled={!selected || selectedChannels.length === 0 || savingDraft}
-                  busy={action.busy}
-                  type="submit"
-                >
-                  <Sparkles size={16} />
-                  <span>Gerar agora</span>
-                </Button>
-              </div>
-            </div>
-          </form>
-        </Modal>
-      ) : null}
+      <ContentFormModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        agents={agents}
+        defaultImageQuality={defaultImageQuality}
+        onSaved={() => {
+          setRevision((v) => v + 1);
+          const p = new URLSearchParams(params.toString());
+          p.delete('status');
+          p.delete('page');
+          router.push(`/contents?${p.toString()}`);
+          router.refresh();
+        }}
+        onGenerated={() => {
+          setRevision((v) => v + 1);
+          router.push('/contents?status=GENERATING');
+          router.refresh();
+        }}
+      />
     </>
   );
 }

@@ -3,6 +3,8 @@ import {
   canTransition,
   permitted,
   channels,
+  statuses,
+  agentSchema,
   validateVariants,
   fitCaptionToLimit,
 } from '@/lib/domain';
@@ -10,6 +12,44 @@ import { nextOccurrence, backoff } from '@/lib/jobs/scheduling';
 import { encrypt, decrypt } from '@/lib/security/crypto';
 import { validateFile } from '@/lib/security/uploads';
 describe('content lifecycle', () => {
+  it('places ROUTINE between DRAFT and GENERATING', () => {
+    const draftIndex = statuses.indexOf('DRAFT');
+    const routineIndex = statuses.indexOf('ROUTINE');
+    const generatingIndex = statuses.indexOf('GENERATING');
+    expect(routineIndex).toBe(draftIndex + 1);
+    expect(generatingIndex).toBe(routineIndex + 1);
+  });
+  it('handles ROUTINE status transitions', () => {
+    expect(canTransition('DRAFT', 'ROUTINE')).toBe(true);
+    expect(canTransition('GENERATING', 'ROUTINE')).toBe(true);
+    expect(canTransition('ROUTINE', 'APPROVED')).toBe(true);
+    expect(canTransition('ROUTINE', 'REJECTED')).toBe(true);
+    expect(canTransition('ROUTINE', 'PUBLISHED')).toBe(false);
+    expect(canTransition('APPROVED', 'ROUTINE')).toBe(true);
+  });
+  it('safely migrates agent mode MANUAL to ASSISTED and validates modes', () => {
+    const baseAgent = {
+      name: 'Agente de Teste',
+      briefing: {},
+      text_settings: {},
+      visual_settings: {},
+      channel_settings: {},
+      channels: ['instagram' as const],
+      content_language: 'pt-BR',
+      approval_required: true,
+      research_enabled: true,
+      image_count: 1,
+      active: true,
+    };
+    const manualParsed = agentSchema.parse({ ...baseAgent, mode: 'MANUAL' });
+    expect(manualParsed.mode).toBe('ASSISTED');
+
+    const assistedParsed = agentSchema.parse({ ...baseAgent, mode: 'ASSISTED' });
+    expect(assistedParsed.mode).toBe('ASSISTED');
+
+    const autonomousParsed = agentSchema.parse({ ...baseAgent, mode: 'AUTONOMOUS' });
+    expect(autonomousParsed.mode).toBe('AUTONOMOUS');
+  });
   it('approval never publishes', () => {
     expect(canTransition('AWAITING_REVIEW', 'PUBLISHED')).toBe(false);
     expect(canTransition('AWAITING_REVIEW', 'APPROVED')).toBe(true);
@@ -49,6 +89,32 @@ describe('content lifecycle', () => {
     ];
     validateVariants(variants, ['x'], 1);
     expect(variants[0].caption.length).toBeLessThanOrEqual(280);
+  });
+  it('gracefully adapts image_prompts count without throwing invalid_output', () => {
+    const variants = [
+      {
+        channel: 'instagram' as const,
+        title: 'Carrossel',
+        hashtags: [],
+        cta: '',
+        visual_concept: '',
+        caption: 'Legenda Instagram',
+        image_prompts: ['slide 1', 'slide 2', 'slide 3', 'slide 4', 'slide 5'],
+      },
+    ];
+    // Excess prompts (5 returned, 1 requested) are sliced to requested count
+    validateVariants(variants, ['instagram'], 1);
+    expect(variants[0].image_prompts.length).toBe(1);
+    expect(variants[0].image_prompts[0]).toBe('slide 1');
+
+    // Insufficient prompts (1 returned, 3 requested) are padded to requested count
+    validateVariants(variants, ['instagram'], 3);
+    expect(variants[0].image_prompts.length).toBe(3);
+    expect(variants[0].image_prompts).toEqual(['slide 1', 'slide 1', 'slide 1']);
+
+    // Zero count requested
+    validateVariants(variants, ['instagram'], 0);
+    expect(variants[0].image_prompts).toEqual([]);
   });
 });
 describe('scheduling', () => {

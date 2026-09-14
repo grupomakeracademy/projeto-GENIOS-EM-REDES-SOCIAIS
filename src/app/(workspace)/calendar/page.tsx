@@ -79,7 +79,7 @@ export default async function Page({
         .order('created_at', { ascending: false })
         .limit(6),
       Promise.all(
-        ['PUBLISHED', 'SCHEDULED', 'APPROVED', 'AWAITING_REVIEW', 'DRAFT', 'REJECTED'].map((s) => {
+        ['PUBLISHED', 'SCHEDULED', 'APPROVED', 'AWAITING_REVIEW', 'ROUTINE', 'DRAFT', 'REJECTED'].map((s) => {
           let countQuery = ctx.db
             .from('content_items')
             .select(network ? 'id,content_variants!inner(channel)' : 'id', {

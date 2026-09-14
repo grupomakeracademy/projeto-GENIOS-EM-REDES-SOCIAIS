@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation';
 import { z } from 'zod';
 import { context, checked, required } from '@/lib/security/context';
 import { ContentDetail } from '@/features/content/detail';
-import type { Content } from '@/lib/domain';
+import type { Content, Agent } from '@/lib/domain';
 export default async function Page({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!z.uuid().safeParse(id).success) notFound();
@@ -44,9 +44,18 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
       .order('created_at', { ascending: false })
       .limit(50),
   );
-  const company = required(
-    await ctx.db.from('workspaces').select('name,timezone').eq('id', ctx.workspaceId).single(),
-  );
+  const [companyRes, connectionsRes, agentsRes, wsSettings] = await Promise.all([
+    ctx.db.from('workspaces').select('name,timezone').eq('id', ctx.workspaceId).single(),
+    ctx.db.from('social_connections').select('id,channel,account_name,created_at').eq('workspace_id', ctx.workspaceId),
+    ctx.db.from('agents').select('*').eq('workspace_id', ctx.workspaceId).limit(100),
+    ctx.db.from('workspace_settings').select('settings').eq('workspace_id', ctx.workspaceId).maybeSingle(),
+  ]);
+  const company = required(companyRes);
+  const connections = connectionsRes.data || [];
+  const agents = (agentsRes.data || []) as Agent[];
+  const globalQ = (checked(wsSettings)?.settings as Record<string, string>)?.image_quality;
+  const defaultImageQuality = globalQ === 'medium' ? 'medium' : 'low';
+
   return (
     <ContentDetail
       initial={item}
@@ -54,6 +63,9 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
       timezone={company.timezone}
       canEdit={ctx.role !== 'VIEWER'}
       events={events || []}
+      connections={connections}
+      agents={agents}
+      defaultImageQuality={defaultImageQuality}
     />
   );
 }

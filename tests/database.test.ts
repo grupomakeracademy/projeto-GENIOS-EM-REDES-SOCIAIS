@@ -32,6 +32,7 @@ beforeAll(async () => {
     '202609110009_support.sql',
     '202609120001_agent_isolation.sql',
     '202609130001_university.sql',
+    '202609140007_persist_generated_draft_support.sql',
   ]) {
     const sql = await readFile(
       new URL(`../supabase/migrations/${filename}`, import.meta.url),
@@ -268,3 +269,70 @@ it('isolates the verified model registry and limits writes to administrators', a
     ),
   ).rejects.toThrow();
 });
+
+it('supports generating directly from an existing draft using persist_generated without duplicating', async () => {
+  const draftId = '10000000-0000-4000-8000-000000000001';
+  const lockToken = '20000000-0000-4000-8000-000000000001';
+  
+  // 1. Insert existing draft
+  await db.exec(
+    `insert into content_items(id, workspace_id, agent_id, topic, strategy, status)
+     values ('${draftId}', '${wa}', '${agentA}', 'Draft Initial Topic', '{"instruction":"Original"}', 'DRAFT')`,
+  );
+
+  // 2. Insert running background job matching the draft id
+  await db.exec(
+    `insert into background_jobs(id, workspace_id, type, status, payload, lock_token, lease_until, idempotency_key)
+     values ('${draftId}', '${wa}', 'agent_run', 'RUNNING', '{"agent_id":"${agentA}"}', '${lockToken}', now() + interval '5 minutes', 'test-draft-key-1')`,
+  );
+
+  // 3. Call persist_generated
+  const variants = JSON.stringify([
+    {
+      channel: 'instagram',
+      title: 'Instagram Title',
+      caption: 'Final generated caption',
+      hashtags: ['#teste'],
+      cta: 'Saiba mais',
+      visual_concept: 'concept 1',
+      image_prompts: ['prompt 1', 'prompt 2'],
+    },
+  ]);
+  const strategy = JSON.stringify({
+    topic: 'Generated Content Topic',
+    instruction: 'Original',
+    is_carousel: true,
+  });
+
+  const res = await db.query<Record<string, unknown>>(
+    `select persist_generated(
+      '${wa}',
+      '${agentA}',
+      '${draftId}',
+      '${lockToken}',
+      '${strategy}',
+      '${variants}',
+      true
+    ) as result`,
+  );
+
+  expect(res.rows[0]?.result).toBe(draftId);
+
+  // 4. Verify draft was updated in place, retaining id and changing status to GENERATING
+  const updated = await db.query<Record<string, unknown>>(
+    `select id, status, topic, strategy->>'topic' as strategy_topic from content_items where id = '${draftId}'`,
+  );
+  expect(updated.rows).toHaveLength(1);
+  expect(updated.rows[0].id).toBe(draftId);
+  expect(updated.rows[0].status).toBe('GENERATING');
+  expect(updated.rows[0].topic).toBe('Generated Content Topic');
+
+  // Verify variant was upserted for the draft
+  const vars = await db.query<Record<string, unknown>>(
+    `select content_id, channel, caption from content_variants where content_id = '${draftId}'`,
+  );
+  expect(vars.rows).toHaveLength(1);
+  expect(vars.rows[0].channel).toBe('instagram');
+  expect(vars.rows[0].caption).toBe('Final generated caption');
+});
+

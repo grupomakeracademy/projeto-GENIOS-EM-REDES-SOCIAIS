@@ -49,9 +49,23 @@ export function Library({
     [adminUsers, setAdminUsers] = useState<UserQuotaItem[]>([]),
     [loadingAdminUsers, setLoadingAdminUsers] = useState(false),
     [savingUserId, setSavingUserId] = useState<string | null>(null),
+    [viewDnaAsset, setViewDnaAsset] = useState<Asset | null>(null),
+    [reprocessingId, setReprocessingId] = useState<string | null>(null),
     [quotaEditValues, setQuotaEditValues] = useState<
       Record<string, { value: number; unlimited: boolean }>
     >({});
+
+  async function handleReprocess(assetId: string) {
+    setReprocessingId(assetId);
+    try {
+      await api('assets', 'PATCH', { action: 'reprocess', id: assetId });
+      router.refresh();
+    } catch (err) {
+      console.error('Falha ao reprocessar ativo:', err);
+    } finally {
+      setReprocessingId(null);
+    }
+  }
 
   const isUnlimited = userQuotaMB === -1 || userQuotaMB === null;
   const usedMB = (userUsedBytes / (1024 * 1024)).toFixed(1);
@@ -288,6 +302,105 @@ export function Library({
                 {asset.category} · {Math.ceil(asset.size / 1024)} KB
               </small>
               <AssetAgents assetId={asset.id} agents={agents} canEdit={canEdit} />
+              
+              {/* Status da Base de Conhecimento Pré-Processada */}
+              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
+                {asset.processing_status === 'processed' ? (
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '3px 8px',
+                      borderRadius: 999,
+                      background: '#ecfdf5',
+                      color: '#047857',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      border: '1px solid #a7f3d0',
+                    }}
+                    title="Ativo interpretado e consolidado na base textual (0 chamadas de visão na geração)"
+                  >
+                    ✓ DNA Visual Ativo
+                  </span>
+                ) : asset.processing_status === 'failed' ? (
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '3px 8px',
+                      borderRadius: 999,
+                      background: '#fef2f2',
+                      color: '#b91c1c',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      border: '1px solid #fecaca',
+                    }}
+                    title={asset.processing_error || 'Erro no processamento'}
+                  >
+                    ⚠ Falha
+                  </span>
+                ) : reprocessingId === asset.id || asset.processing_status === 'processing' ? (
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '3px 8px',
+                      borderRadius: 999,
+                      background: '#fffbeb',
+                      color: '#b45309',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      border: '1px solid #fde68a',
+                    }}
+                  >
+                    ⏳ Analisando agora...
+                  </span>
+                ) : (
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '3px 8px',
+                      borderRadius: 999,
+                      background: '#f8fafc',
+                      color: '#64748b',
+                      fontSize: '11px',
+                      fontWeight: 500,
+                      border: '1px solid #e2e8f0',
+                    }}
+                    title="Ativo original armazenado. Clique em 'Processar' se desejar extrair o DNA visual para geração."
+                  >
+                    ⚪ Não processado
+                  </span>
+                )}
+
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {asset.summary_text ? (
+                    <Button
+                      secondary
+                      style={{ padding: '2px 8px', fontSize: '11px', height: 24 }}
+                      onClick={() => setViewDnaAsset(asset)}
+                    >
+                      Ver DNA
+                    </Button>
+                  ) : null}
+                  {canEdit && (asset.processing_status !== 'processed' || !asset.summary_text) ? (
+                    <Button
+                      secondary
+                      busy={reprocessingId === asset.id}
+                      style={{ padding: '2px 8px', fontSize: '11px', height: 24 }}
+                      onClick={() => handleReprocess(asset.id)}
+                    >
+                      Processar
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+
               <div className="form-row" style={{ marginTop: 15 }}>
                 <a className="button secondary" href={`/api/download?id=${asset.id}`}>
                   {t('download')}
@@ -599,6 +712,103 @@ export function Library({
             </button>
           </div>
         </div>
+      )}
+      {/* Modal Ver DNA Visual */}
+      {viewDnaAsset && (
+        <Modal
+          title={`DNA Visual: ${viewDnaAsset.name}`}
+          subtitle="Conhecimento interpretado pela IA e reutilizado no gerador de imagens sem reenviar arquivos originais."
+          onClose={() => setViewDnaAsset(null)}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxHeight: '65vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ padding: '3px 8px', borderRadius: 6, background: '#f1f5f9', color: '#475569', fontSize: '12px' }}>
+                Modelo: <strong>{viewDnaAsset.processor_model || 'gpt-4o'}</strong>
+              </span>
+              <span style={{ padding: '3px 8px', borderRadius: 6, background: '#f1f5f9', color: '#475569', fontSize: '12px' }}>
+                Hash: <code>{viewDnaAsset.content_hash ? viewDnaAsset.content_hash.slice(0, 12) + '...' : 'N/A'}</code>
+              </span>
+              {viewDnaAsset.processed_at && (
+                <span style={{ padding: '3px 8px', borderRadius: 6, background: '#f1f5f9', color: '#475569', fontSize: '12px' }}>
+                  Processado em: {new Date(viewDnaAsset.processed_at).toLocaleString('pt-BR')}
+                </span>
+              )}
+            </div>
+
+            {viewDnaAsset.textual_interpretation && typeof viewDnaAsset.textual_interpretation === 'object' ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, background: '#f8fafc', padding: 14, borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                {Boolean((viewDnaAsset.textual_interpretation as Record<string, unknown>).art_style) && (
+                  <div>
+                    <strong style={{ fontSize: '12px', color: '#334155' }}>Estilo Artístico:</strong>
+                    <p style={{ margin: '2px 0 0', fontSize: '13px', color: '#0f172a' }}>
+                      {String((viewDnaAsset.textual_interpretation as Record<string, unknown>).art_style)}
+                    </p>
+                  </div>
+                )}
+                {Boolean((viewDnaAsset.textual_interpretation as Record<string, unknown>).brand_identity_and_mood) && (
+                  <div>
+                    <strong style={{ fontSize: '12px', color: '#334155' }}>Identidade e Clima:</strong>
+                    <p style={{ margin: '2px 0 0', fontSize: '13px', color: '#0f172a' }}>
+                      {String((viewDnaAsset.textual_interpretation as Record<string, unknown>).brand_identity_and_mood)}
+                    </p>
+                  </div>
+                )}
+                {Array.isArray((viewDnaAsset.textual_interpretation as Record<string, unknown>).predominant_colors) && (
+                  <div>
+                    <strong style={{ fontSize: '12px', color: '#334155' }}>Cores Mandatórias:</strong>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+                      {((viewDnaAsset.textual_interpretation as Record<string, unknown>).predominant_colors as string[]).map((c, i) => (
+                        <span key={i} style={{ padding: '2px 8px', borderRadius: 4, background: '#e0e7ff', color: '#3730a3', fontSize: '12px', fontWeight: 600 }}>
+                          {c}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {Boolean((viewDnaAsset.textual_interpretation as Record<string, unknown>).characters_and_mascots) &&
+                  String((viewDnaAsset.textual_interpretation as Record<string, unknown>).characters_and_mascots) !== 'Nenhum' && (
+                  <div>
+                    <strong style={{ fontSize: '12px', color: '#334155' }}>Personagens / Mascotes:</strong>
+                    <p style={{ margin: '2px 0 0', fontSize: '13px', color: '#0f172a' }}>
+                      {String((viewDnaAsset.textual_interpretation as Record<string, unknown>).characters_and_mascots)}
+                    </p>
+                  </div>
+                )}
+                {Boolean((viewDnaAsset.textual_interpretation as Record<string, unknown>).generation_guidelines) && (
+                  <div>
+                    <strong style={{ fontSize: '12px', color: '#334155' }}>Diretriz para o Gerador:</strong>
+                    <p style={{ margin: '2px 0 0', fontSize: '13px', color: '#0f172a' }}>
+                      {String((viewDnaAsset.textual_interpretation as Record<string, unknown>).generation_guidelines)}
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : null}
+
+            <div>
+              <strong style={{ fontSize: '12px', color: '#334155' }}>Resumo Injetado no Contexto da Geração:</strong>
+              <div style={{ marginTop: 4, padding: 10, background: '#f1f5f9', borderRadius: 6, fontSize: '12px', color: '#1e293b', lineHeight: 1.5 }}>
+                {viewDnaAsset.summary_text || 'Sem resumo disponível.'}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 10 }}>
+              {canEdit ? (
+                <Button
+                  secondary
+                  busy={reprocessingId === viewDnaAsset.id}
+                  onClick={async () => {
+                    await handleReprocess(viewDnaAsset.id);
+                    setViewDnaAsset(null);
+                  }}
+                >
+                  Reprocessar com IA
+                </Button>
+              ) : null}
+              <Button onClick={() => setViewDnaAsset(null)}>Fechar</Button>
+            </div>
+          </div>
+        </Modal>
       )}
     </>
   );

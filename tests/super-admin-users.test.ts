@@ -39,6 +39,10 @@ describe('Super Admin Users Management & Quota Unit', () => {
       status: 'active',
       created_at: '2026-09-11T12:00:00Z',
       last_sign_in_at: '2026-09-13T10:00:00Z',
+      content_quota_balance: 100,
+      content_quota_total_assigned: 150,
+      content_quota_total_consumed: 50,
+      quota_transactions: [],
       total_generations: 5,
       saldo_consumido: 48,
       qualities_used: {
@@ -118,5 +122,54 @@ describe('Super Admin Users Management & Quota Unit', () => {
     expect(superAdminSections).toContain('credentials');
     expect(superAdminSections).toContain('library');
     expect(superAdminSections).toContain('users');
+  });
+
+  it('validates and normalizes assign_content_quota mode (accepting add/set case-insensitively)', () => {
+    const { z } = require('zod');
+    const quotaPayloadSchema = z.object({
+      userId: z.string().uuid(),
+      amount: z.number().int().min(0).max(1000000),
+      mode: z.enum(['add', 'set', 'ADD', 'SET']).transform((m: string) => m.toLowerCase() as 'add' | 'set'),
+      reason: z.string().max(500).optional(),
+    });
+
+    const testUuid = 'af3eeb65-2bfe-4474-9e60-041acbf805fc';
+
+    const lowerAdd = quotaPayloadSchema.parse({
+      userId: testUuid,
+      amount: 50,
+      mode: 'add',
+      reason: 'Bônus mensal',
+    });
+    expect(lowerAdd.mode).toBe('add');
+
+    const upperAdd = quotaPayloadSchema.parse({
+      userId: testUuid,
+      amount: 50,
+      mode: 'ADD',
+    });
+    expect(upperAdd.mode).toBe('add');
+
+    const lowerSet = quotaPayloadSchema.parse({
+      userId: testUuid,
+      amount: 200,
+      mode: 'set',
+    });
+    expect(lowerSet.mode).toBe('set');
+
+    const upperSet = quotaPayloadSchema.parse({
+      userId: testUuid,
+      amount: 200,
+      mode: 'SET',
+    });
+    expect(upperSet.mode).toBe('set');
+
+    expect(() =>
+      quotaPayloadSchema.parse({
+        userId: testUuid,
+        amount: 50,
+        mode: 'multiply',
+      }),
+    ).toThrow();
   });
 });

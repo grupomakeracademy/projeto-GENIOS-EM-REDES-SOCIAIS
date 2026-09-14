@@ -3,6 +3,7 @@ import { guard, checked, required, fail, AppError } from '@/lib/security/context
 import { adminClient } from '@/lib/supabase/server';
 import { validateFile } from '@/lib/security/uploads';
 import { isSuperAdmin } from '@/lib/security/super-admin';
+import { computeContentHash, processAssetKnowledge } from '@/lib/ai/asset-knowledge';
 export async function GET(request: Request) {
   try {
     const ctx = await guard(request),
@@ -74,6 +75,7 @@ export async function POST(request: Request) {
       const ext = validateFile(bytes, file.type);
       const id = crypto.randomUUID();
       const path = `workspace/${ctx.workspaceId}/library/${id}.${ext}`;
+      const hash = computeContentHash(bytes);
 
       checked(
         await db.storage
@@ -90,6 +92,8 @@ export async function POST(request: Request) {
         storage_path: path,
         size: file.size,
         created_by: ctx.user.id,
+        content_hash: hash,
+        processing_status: 'pending',
       });
 
       if (result.error) {
@@ -97,6 +101,30 @@ export async function POST(request: Request) {
         throw new AppError('database_error', 503);
       }
       uploadedAssets.push({ id, name: file.name });
+
+      // Check if identical file was already processed elsewhere (free deduplication, 0 API calls)
+      const { data: existingProcessed } = await db
+        .from('assets')
+        .select('textual_interpretation, summary_text, processor_model, processing_version')
+        .eq('content_hash', hash)
+        .eq('processing_status', 'processed')
+        .not('summary_text', 'is', null)
+        .limit(1)
+        .maybeSingle();
+
+      if (existingProcessed?.summary_text) {
+        await db
+          .from('assets')
+          .update({
+            processing_status: 'processed',
+            processed_at: new Date().toISOString(),
+            processor_model: existingProcessed.processor_model,
+            processing_version: existingProcessed.processing_version || 1,
+            textual_interpretation: existingProcessed.textual_interpretation,
+            summary_text: existingProcessed.summary_text,
+          })
+          .eq('id', id);
+      }
     }
 
     return Response.json({
@@ -112,11 +140,24 @@ export async function PATCH(request: Request) {
   try {
     const ctx = await guard(request, 'write');
     const raw = await request.json();
+    if (raw.action === 'reprocess') {
+      const input = z.object({ id: z.uuid() }).parse(raw);
+      const result = await processAssetKnowledge(input.id, { force: true });
+      return Response.json({ ok: true, ...result });
+    }
     if (raw.action === 'associate') {
       const input = z.object({ id: z.uuid(), agent_ids: z.array(z.uuid()).max(100) }).parse(raw);
+      const db = adminClient();
+      const { data: assetItem } = await db
+        .from('assets')
+        .select('id, workspace_id')
+        .eq('id', input.id)
+        .maybeSingle();
+      if (!assetItem) throw new AppError('asset_not_found', 404);
+      const targetWs = assetItem.workspace_id || ctx.workspaceId;
       checked(
-        await adminClient().rpc('set_asset_agents', {
-          w: ctx.workspaceId,
+        await db.rpc('set_asset_agents', {
+          w: targetWs,
           actor_id: ctx.user.id,
           asset: input.id,
           agents: input.agent_ids,

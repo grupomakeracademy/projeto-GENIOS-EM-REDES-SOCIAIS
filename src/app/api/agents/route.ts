@@ -5,18 +5,22 @@ import { requireAgent } from '@/lib/security/agent';
 import { guard, checked, fail, AppError } from '@/lib/security/context';
 import { adminClient } from '@/lib/supabase/server';
 import { nextOccurrence } from '@/lib/jobs/scheduling';
+import { isSuperAdmin } from '@/lib/security/super-admin';
+
 export async function GET(request: Request) {
   try {
     const ctx = await guard(request);
-    return Response.json({
-      items: checked(
-        await ctx.db
+    const isSuper = isSuperAdmin(ctx.user);
+    const query = isSuper
+      ? adminClient().from('agents').select('*').order('name').limit(100)
+      : ctx.db
           .from('agents')
           .select('*')
           .eq('workspace_id', ctx.workspaceId)
           .order('created_at')
-          .limit(100),
-      ),
+          .limit(100);
+    return Response.json({
+      items: checked(await query),
     });
   } catch (e) {
     return fail(e);
@@ -123,14 +127,12 @@ export async function POST(request: Request) {
       id = raw.id ? z.uuid().parse(raw.id) : undefined;
     if (!id) throw new AppError('invalid_input');
     await requireAgent(ctx, id);
-    const current = checked(
-      await ctx.db
-        .from('agents')
-        .select('text_settings')
-        .eq('id', id)
-        .eq('workspace_id', ctx.workspaceId)
-        .single(),
-    );
+    const isSuper = isSuperAdmin(ctx.user);
+    const db = isSuper ? adminClient() : ctx.db;
+    let currentQuery = db.from('agents').select('text_settings, visual_settings, workspace_id').eq('id', id);
+    if (!isSuper) currentQuery = currentQuery.eq('workspace_id', ctx.workspaceId);
+    const current = checked(await currentQuery.single());
+
     if (current?.text_settings?.ai_configs !== undefined)
       input.text_settings.ai_configs = current.text_settings.ai_configs;
     const references = z
@@ -138,30 +140,31 @@ export async function POST(request: Request) {
       .max(100)
       .parse(input.visual_settings.reference_ids || []);
     if (references.length) {
-      const assets =
-        checked(
-          await ctx.db
-            .from('assets')
-            .select('id')
-            .eq('workspace_id', ctx.workspaceId)
-            .in('id', references),
-        ) || [];
-      if (assets.length !== new Set(references).size) throw new AppError('forbidden', 403);
+      const assetQuery = isSuper
+        ? adminClient().from('assets').select('id').in('id', references)
+        : ctx.db.from('assets').select('id').in('id', references);
+      const assets = checked(await assetQuery) || [];
+      const currentRefIds = new Set(
+        Array.isArray(current?.visual_settings?.reference_ids)
+          ? current.visual_settings.reference_ids
+          : [],
+      );
+      const validIds = new Set(assets.map((a: { id: string }) => a.id));
+      const allValid = references.every((ref) => validIds.has(ref) || currentRefIds.has(ref));
+      if (!allValid && !isSuper) throw new AppError('forbidden', 403);
     }
+    const targetWs = current?.workspace_id || ctx.workspaceId;
+    let updateQuery = db
+      .from('agents')
+      .update({ ...input, updated_at: new Date().toISOString() })
+      .eq('id', id);
+    if (!isSuper) updateQuery = updateQuery.eq('workspace_id', ctx.workspaceId);
     const data = id
-      ? checked(
-          await ctx.db
-            .from('agents')
-            .update({ ...input, updated_at: new Date().toISOString() })
-            .eq('id', id)
-            .eq('workspace_id', ctx.workspaceId)
-            .select()
-            .single(),
-        )
+      ? checked(await updateQuery.select().single())
       : checked(
-          await ctx.db
+          await db
             .from('agents')
-            .insert({ ...input, workspace_id: ctx.workspaceId })
+            .insert({ ...input, workspace_id: targetWs })
             .select()
             .single(),
         );
@@ -169,7 +172,7 @@ export async function POST(request: Request) {
       await adminClient()
         .from('audit_logs')
         .insert({
-          workspace_id: ctx.workspaceId,
+          workspace_id: targetWs,
           actor: ctx.user.id,
           event: id ? 'AGENT_UPDATED' : 'AGENT_CREATED',
           metadata: { agent_id: data.id },

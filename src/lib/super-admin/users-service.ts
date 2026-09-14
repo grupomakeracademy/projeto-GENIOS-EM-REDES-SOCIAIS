@@ -7,14 +7,15 @@ import { QUALITY_MULTIPLIERS, type AdminUserDetail, type UserStatus, type QuotaA
 export async function getAdminUsersList(): Promise<AdminUserDetail[]> {
   const db = adminClient();
 
-  const [authRes, profilesRes, membersRes, assetsRes, jobsRes, contentsRes, auditsRes] = await Promise.all([
+  const [authRes, profilesRes, membersRes, assetsRes, jobsRes, contentsRes, auditsRes, quotaTxRes] = await Promise.all([
     db.auth.admin.listUsers({ perPage: 1000 }),
-    db.from('profiles').select('id,name,storage_quota_mb,onboarding_draft,created_at'),
+    db.from('profiles').select('id,name,storage_quota_mb,content_quota_balance,content_quota_total_assigned,content_quota_total_consumed,onboarding_draft,created_at'),
     db.from('workspace_members').select('user_id,role'),
     db.from('assets').select('created_by,size'),
     db.from('background_jobs').select('id,type,status,payload,scheduled_at'),
     db.from('content_items').select('id,created_by,created_at'),
     db.from('audit_logs').select('id,workspace_id,actor,event,metadata,created_at').order('created_at', { ascending: false }),
+    db.from('quota_transactions').select('*').order('created_at', { ascending: false }).limit(500),
   ]);
 
   const authUsers = authRes.data?.users || [];
@@ -24,6 +25,7 @@ export async function getAdminUsersList(): Promise<AdminUserDetail[]> {
   const jobs = checked(jobsRes) ?? [];
   const contents = checked(contentsRes) ?? [];
   const audits = checked(auditsRes) ?? [];
+  const quotaTxs = checked(quotaTxRes) ?? [];
 
   const profileMap = new Map(profiles.map((p: any) => [p.id, p]));
   const roleMap = new Map(members.map((m: any) => [m.user_id, m.role]));
@@ -94,6 +96,17 @@ export async function getAdminUsersList(): Promise<AdminUserDetail[]> {
     }
   }
 
+  const authUserEmailMap = new Map(authUsers.map((u) => [u.id, u.email]));
+
+  const quotaTransactionsByUser: Record<string, any[]> = {};
+  for (const tx of quotaTxs) {
+    if (!quotaTransactionsByUser[tx.user_id]) quotaTransactionsByUser[tx.user_id] = [];
+    quotaTransactionsByUser[tx.user_id].push({
+      ...tx,
+      admin_email: tx.actor_id ? authUserEmailMap.get(tx.actor_id) : undefined,
+    });
+  }
+
   const userDetails: AdminUserDetail[] = [];
   const seenIds = new Set<string>();
 
@@ -134,6 +147,10 @@ export async function getAdminUsersList(): Promise<AdminUserDetail[]> {
       status,
       created_at: u.created_at,
       last_sign_in_at: u.last_sign_in_at || null,
+      content_quota_balance: p?.content_quota_balance ?? 100,
+      content_quota_total_assigned: p?.content_quota_total_assigned ?? 100,
+      content_quota_total_consumed: p?.content_quota_total_consumed ?? 0,
+      quota_transactions: quotaTransactionsByUser[u.id] || [],
       total_generations: userGenerations[u.id] || 0,
       saldo_consumido: userConsumption[u.id] || 0,
       qualities_used: userQualities[u.id] || { low: 0, medium: 0, high: 0 },
@@ -159,6 +176,10 @@ export async function getAdminUsersList(): Promise<AdminUserDetail[]> {
         status: 'active',
         created_at: p.created_at,
         last_sign_in_at: null,
+        content_quota_balance: p.content_quota_balance ?? 100,
+        content_quota_total_assigned: p.content_quota_total_assigned ?? 100,
+        content_quota_total_consumed: p.content_quota_total_consumed ?? 0,
+        quota_transactions: quotaTransactionsByUser[p.id] || [],
         total_generations: userGenerations[p.id] || 0,
         saldo_consumido: userConsumption[p.id] || 0,
         qualities_used: userQualities[p.id] || { low: 0, medium: 0, high: 0 },

@@ -3,6 +3,7 @@ import { contentList } from '@/features/content/queries';
 import { guard, fail, AppError } from '@/lib/security/context';
 import { channels, channelSchema } from '@/lib/domain';
 import { requireAgent } from '@/lib/security/agent';
+import { adminClient } from '@/lib/supabase/server';
 
 export async function GET(request: Request) {
   try {
@@ -31,17 +32,24 @@ export async function POST(request: Request) {
 
     await requireAgent(ctx, body.agent_id);
 
+    if (body.image_count <= 1) {
+      body.is_carousel = false;
+    }
+
     const topic = body.instruction.trim() || 'Novo rascunho de conteúdo';
     const strategy = {
       image_style: body.image_style || 'Disney / Pixar',
       image_quality: body.image_quality || 'low',
-      is_carousel: body.is_carousel ?? false,
+      is_carousel: body.image_count >= 2 ? (body.is_carousel ?? false) : false,
       cta: body.cta || '',
       channels: body.channels,
       image_count: body.image_count,
+      instruction: body.instruction.trim(),
     };
 
-    const { data: item, error: itemError } = await ctx.db
+    const db = adminClient();
+
+    const { data: item, error: itemError } = await db
       .from('content_items')
       .insert({
         workspace_id: ctx.workspaceId,
@@ -63,18 +71,18 @@ export async function POST(request: Request) {
       content_id: item.id,
       channel: ch,
       title: topic.slice(0, 120),
-      caption: body.instruction || '',
+      caption: '',
       cta: body.cta || '',
       aspect_ratio: channels[ch]?.ratio || '4:5',
       image_prompts: [],
     }));
 
-    const { error: varError } = await ctx.db.from('content_variants').insert(variants);
+    const { error: varError } = await db.from('content_variants').insert(variants);
     if (varError) {
       throw new AppError(varError.message || 'database_error', 500);
     }
 
-    await ctx.db.from('content_events').insert({
+    await db.from('content_events').insert({
       workspace_id: ctx.workspaceId,
       content_id: item.id,
       actor: ctx.user.id,

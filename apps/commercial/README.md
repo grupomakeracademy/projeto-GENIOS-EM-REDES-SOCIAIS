@@ -20,6 +20,10 @@ Leads podem ser consultados pela administração no Supabase em `commercial_lead
 
 ## Conteúdo e testes
 
+O refinamento público usa Manrope variável hospedada localmente, com licença OFL em `public/fonts/OFL.txt`. As imagens WebP de `public/product` foram otimizadas a partir das capturas reais fornecidas pelo proprietário (Lista, Kanban, Rotina e Calendário). A demonstração do hero é uma animação local; não chama APIs de IA. Possui pausa, suspensão fora da tela e suporte a movimento reduzido. As apresentações do produto acompanham a rolagem nos dois sentidos, com alternância manual e ampliação; em celulares, permitem explorar a captura horizontalmente.
+
+O componente de depoimentos está preparado para relatos reais, com pausa e alternativa sem movimento. Enquanto `testimonials` estiver vazio, não renderiza título, cards ou espaço reservado. Não adicionar depoimentos ilustrativos como se fossem clientes.
+
 Depoimentos reais podem ser adicionados em `lib/content.ts`; a seção só aparece quando houver registros. Não há clientes ou resultados inventados. Referências à autopublicação distinguem compatibilidade oficial de habilitação da integração; WhatsApp é geração/distribuição.
 
 `npx playwright test --config apps/commercial/playwright.config.ts` verifica o site nas portas locais. `node --env-file=.env.local scripts/commercial-smoke.mjs` testa persistência real, idempotência, limites e bloqueio de leitura anônima, limpando as fixtures.

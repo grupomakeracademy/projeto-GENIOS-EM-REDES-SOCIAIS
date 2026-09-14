@@ -21,7 +21,7 @@ export async function tick() {
         {
           workspace_id: schedule.workspace_id,
           type: 'agent_run',
-          payload: { agent_id: schedule.agent_id },
+          payload: { agent_id: schedule.agent_id, origin: 'routine' },
           idempotency_key: key,
         },
         { onConflict: 'idempotency_key', ignoreDuplicates: true },
@@ -80,6 +80,7 @@ export async function tick() {
       'conflict',
       'invalid_input',
       'lease_lost',
+      'insufficient_quota',
     ];
     const code =
       error instanceof Error && safe.includes(error.message) ? error.message : 'internal_error';
@@ -107,23 +108,44 @@ export async function tick() {
     );
     if (!retry) {
       const id = String(job.payload.content_id || job.id);
-      checked(
+      if (job.type === 'regenerate_image' || job.type === 'regenerate_copy') {
+        // Critical requirement: Regeneration failure must NEVER invalidate the original valid content into 'FAILED'.
+        // Restore content status back to its previous status (e.g. 'AWAITING_REVIEW' or 'ROUTINE')
+        const previousStatus =
+          ((job.payload as Record<string, unknown>)?.previous_status as string) ||
+          'AWAITING_REVIEW';
         await db
           .from('content_items')
-          .update({ status: 'FAILED' })
+          .update({ status: previousStatus })
           .eq('id', id)
           .eq('workspace_id', job.workspace_id)
-          .eq('status', 'GENERATING'),
-      );
-      checked(
+          .eq('status', 'GENERATING');
         await db
           .from('notifications')
           .insert({
             workspace_id: job.workspace_id,
-            message: code,
-            href: '/contents?status=FAILED',
-          }),
-      );
+            message: `Falha na regeneração (${code})`,
+            href: `/contents/${id}`,
+          });
+      } else {
+        checked(
+          await db
+            .from('content_items')
+            .update({ status: 'FAILED' })
+            .eq('id', id)
+            .eq('workspace_id', job.workspace_id)
+            .eq('status', 'GENERATING'),
+        );
+        checked(
+          await db
+            .from('notifications')
+            .insert({
+              workspace_id: job.workspace_id,
+              message: code,
+              href: '/contents?status=FAILED',
+            }),
+        );
+      }
     }
     return { processed: true, id: job.id, status: retry ? 'RETRYING' : 'FAILED', error: code };
   }

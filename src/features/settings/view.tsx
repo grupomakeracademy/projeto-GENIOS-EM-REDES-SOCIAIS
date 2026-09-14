@@ -21,6 +21,7 @@ import {
   AlertCircle,
   RefreshCw,
   Search,
+  Coins,
 } from 'lucide-react';
 import { Button, Card, Field, Notice, Modal, useT, useLocale, useAction, api } from '@/components/ui';
 import type { AIConfig, ProviderId, AdminUserDetail, UserStatus, QuotaAdjustmentLog } from '@/lib/domain';
@@ -96,7 +97,12 @@ export function SettingsView({
     [deletingUser, setDeletingUser] = useState<boolean>(false),
     [userStatusBusyId, setUserStatusBusyId] = useState<string | null>(null),
     [userResetBusyId, setUserResetBusyId] = useState<string | null>(null),
-    [usersNotice, setUsersNotice] = useState<{ message: string; error?: boolean } | null>(null);
+    [usersNotice, setUsersNotice] = useState<{ message: string; error?: boolean } | null>(null),
+    [selectedUserForContentQuota, setSelectedUserForContentQuota] = useState<AdminUserDetail | null>(null),
+    [contentQuotaMode, setContentQuotaMode] = useState<'add' | 'set'>('add'),
+    [contentQuotaAmount, setContentQuotaAmount] = useState<number>(50),
+    [contentQuotaReason, setContentQuotaReason] = useState<string>(''),
+    [savingContentQuota, setSavingContentQuota] = useState<boolean>(false);
 
   const handleSaveGlobalQuality = async () => {
     setSavingQuality(true);
@@ -201,6 +207,68 @@ export function SettingsView({
       });
     } finally {
       setSavingQuotaModal(false);
+    }
+  };
+
+  const handleOpenContentQuotaModal = (u: AdminUserDetail) => {
+    setSelectedUserForContentQuota(u);
+    setContentQuotaMode('add');
+    setContentQuotaAmount(50);
+    setContentQuotaReason('');
+  };
+
+  const handleSaveContentQuota = async () => {
+    if (!selectedUserForContentQuota) return;
+    setSavingContentQuota(true);
+    setUsersNotice(null);
+    try {
+      const res = await api('super-admin/users', 'PATCH', {
+        action: 'assign_content_quota',
+        userId: selectedUserForContentQuota.id,
+        amount: Number(contentQuotaAmount),
+        mode: contentQuotaMode,
+        reason: contentQuotaReason.trim() || undefined,
+      });
+
+      const newTx = res.transaction;
+      const newBalance = res.balance;
+
+      setAdminUsers((prev) =>
+        prev.map((u) => {
+          if (u.id === selectedUserForContentQuota.id) {
+            const prevAssigned = u.content_quota_total_assigned ?? 0;
+            return {
+              ...u,
+              content_quota_balance: newBalance,
+              content_quota_total_assigned:
+                contentQuotaMode === 'add'
+                  ? prevAssigned + Number(contentQuotaAmount)
+                  : prevAssigned,
+              quota_transactions: newTx
+                ? [newTx, ...(u.quota_transactions || [])]
+                : u.quota_transactions,
+            };
+          }
+          return u;
+        }),
+      );
+
+      setUsersNotice({
+        message: `Cotas de conteúdo de "${selectedUserForContentQuota.name}" atualizadas com sucesso! Novo saldo: ${newBalance} cotas.`,
+      });
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('quota-updated'));
+      }
+
+      setSelectedUserForContentQuota(null);
+    } catch (err: any) {
+      setUsersNotice({
+        message: `Erro ao atribuir cotas: ${err.message || 'Erro inesperado'}`,
+        error: true,
+      });
+    } finally {
+      setSavingContentQuota(false);
     }
   };
 
@@ -1161,14 +1229,31 @@ export function SettingsView({
 
                           {/* Usage & Consumption */}
                           <td style={{ padding: '12px 14px', verticalAlign: 'middle' }}>
-                            <div style={{ fontWeight: 600, color: '#0f172a' }}>
-                              {u.total_generations} gerações
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 6,
+                                fontWeight: 700,
+                                color: '#b45309',
+                                fontSize: '13px',
+                              }}
+                            >
+                              <span>🪙</span>
+                              <span>{u.content_quota_balance ?? 0} cotas</span>
                             </div>
-                            <div style={{ fontSize: '12px', color: '#64748b', marginTop: 2 }}>
-                              <span style={{ fontWeight: 600, color: '#7e22ce' }}>
-                                {u.saldo_consumido}
-                              </span>{' '}
-                              conteúdos consumidos
+                            <div style={{ fontSize: '11px', color: '#64748b', marginTop: 3 }}>
+                              Atribuído:{' '}
+                              <strong style={{ color: '#0f172a' }}>
+                                {u.content_quota_total_assigned ?? 0}
+                              </strong>{' '}
+                              · Consumido:{' '}
+                              <strong style={{ color: '#7e22ce' }}>
+                                {u.content_quota_total_consumed ?? u.saldo_consumido ?? 0}
+                              </strong>
+                            </div>
+                            <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: 2 }}>
+                              {u.total_generations} gerações no total
                             </div>
                           </td>
 
@@ -1314,16 +1399,34 @@ export function SettingsView({
                                 Redefinir Senha
                               </Button>
 
-                              {/* Adjust Limit / Quota */}
+                              {/* Adjust Storage Limit */}
                               <Button
                                 secondary
                                 type="button"
                                 onClick={() => handleOpenQuotaModal(u)}
                                 style={{ padding: '4px 8px', fontSize: '11px' }}
-                                title="Ajustar limite e ver histórico"
+                                title="Ajustar limite de armazenamento e ver histórico"
                               >
                                 <HardDrive size={12} style={{ marginRight: 3 }} />
                                 Ajustar Limite
+                              </Button>
+
+                              {/* Atribuir Cotas de Conteúdo */}
+                              <Button
+                                secondary
+                                type="button"
+                                onClick={() => handleOpenContentQuotaModal(u)}
+                                style={{
+                                  padding: '4px 8px',
+                                  fontSize: '11px',
+                                  color: '#b45309',
+                                  borderColor: '#fde68a',
+                                  background: '#fffbeb',
+                                }}
+                                title="Atribuir cotas de conteúdo e ver histórico de movimentações"
+                              >
+                                <Coins size={12} style={{ marginRight: 3 }} />
+                                Atribuir Cotas
                               </Button>
 
                               {/* Delete (Never for Super Admin) */}
@@ -1633,6 +1736,356 @@ export function SettingsView({
               ) : (
                 <p style={{ fontSize: '12px', color: '#94a3b8', margin: 0, fontStyle: 'italic' }}>
                   Nenhum ajuste registrado anteriormente para este usuário.
+                </p>
+              )}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Content Quota Assignment Modal */}
+      {selectedUserForContentQuota && (
+        <Modal
+          title="Atribuir Cotas de Conteúdo"
+          subtitle={`Usuário: ${selectedUserForContentQuota.name} (${selectedUserForContentQuota.email || 'Sem e-mail'})`}
+          icon={<Coins size={24} color="#d97706" />}
+          onClose={() => !savingContentQuota && setSelectedUserForContentQuota(null)}
+        >
+          <div style={{ padding: '4px 0 10px', minWidth: '460px', maxWidth: '100%' }}>
+            {/* Current Quota Status Cards */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, 1fr)',
+                gap: 10,
+                marginBottom: 16,
+                padding: '12px 14px',
+                background: '#fffbeb',
+                borderRadius: 8,
+                border: '1px solid #fde68a',
+              }}
+            >
+              <div>
+                <span
+                  style={{ fontSize: '11px', color: '#92400e', display: 'block', fontWeight: 500 }}
+                >
+                  Saldo Atual
+                </span>
+                <span style={{ fontSize: '16px', fontWeight: 700, color: '#b45309' }}>
+                  🪙 {selectedUserForContentQuota.content_quota_balance ?? 0}
+                </span>
+              </div>
+              <div>
+                <span
+                  style={{ fontSize: '11px', color: '#92400e', display: 'block', fontWeight: 500 }}
+                >
+                  Total Atribuído
+                </span>
+                <span style={{ fontSize: '16px', fontWeight: 700, color: '#0f172a' }}>
+                  {selectedUserForContentQuota.content_quota_total_assigned ?? 0}
+                </span>
+              </div>
+              <div>
+                <span
+                  style={{ fontSize: '11px', color: '#92400e', display: 'block', fontWeight: 500 }}
+                >
+                  Total Consumido
+                </span>
+                <span style={{ fontSize: '16px', fontWeight: 700, color: '#7e22ce' }}>
+                  {selectedUserForContentQuota.content_quota_total_consumed ??
+                    selectedUserForContentQuota.saldo_consumido ??
+                    0}
+                </span>
+              </div>
+            </div>
+
+            {/* Mode selection: Add vs Set */}
+            <div style={{ marginBottom: 14 }}>
+              <span
+                style={{
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  color: '#334155',
+                  display: 'block',
+                  marginBottom: 6,
+                }}
+              >
+                Tipo de Movimentação:
+              </span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => setContentQuotaMode('add')}
+                  style={{
+                    flex: 1,
+                    padding: '8px 12px',
+                    borderRadius: 6,
+                    border: `1px solid ${contentQuotaMode === 'add' ? '#d97706' : '#cbd5e1'}`,
+                    background: contentQuotaMode === 'add' ? '#fef3c7' : '#ffffff',
+                    color: contentQuotaMode === 'add' ? '#92400e' : '#475569',
+                    fontWeight: 600,
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  + Adicionar ao Saldo (Crédito)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setContentQuotaMode('set')}
+                  style={{
+                    flex: 1,
+                    padding: '8px 12px',
+                    borderRadius: 6,
+                    border: `1px solid ${contentQuotaMode === 'set' ? '#2563eb' : '#cbd5e1'}`,
+                    background: contentQuotaMode === 'set' ? '#eff6ff' : '#ffffff',
+                    color: contentQuotaMode === 'set' ? '#1e40af' : '#475569',
+                    fontWeight: 600,
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  = Definir Saldo Exato
+                </button>
+              </div>
+            </div>
+
+            {/* Amount and quick chips */}
+            <div style={{ marginBottom: 14 }}>
+              <Field
+                label={
+                  contentQuotaMode === 'add'
+                    ? 'Quantidade de cotas a adicionar:'
+                    : 'Novo saldo exato:'
+                }
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100000}
+                    value={contentQuotaAmount}
+                    onChange={(e) => setContentQuotaAmount(Math.max(0, Number(e.target.value)))}
+                    style={{
+                      background: '#ffffff',
+                      width: '140px',
+                      fontWeight: 700,
+                      fontSize: '14px',
+                    }}
+                  />
+                  <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 600 }}>
+                    cotas
+                  </span>
+                  <span
+                    style={{
+                      marginLeft: 'auto',
+                      fontSize: '12px',
+                      color: '#059669',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Saldo resultante: 🪙{' '}
+                    {contentQuotaMode === 'add'
+                      ? (selectedUserForContentQuota.content_quota_balance ?? 0) +
+                        Number(contentQuotaAmount)
+                      : Number(contentQuotaAmount)}{' '}
+                    cotas
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {[10, 25, 50, 100, 250, 500].map((val) => (
+                    <button
+                      key={val}
+                      type="button"
+                      onClick={() => setContentQuotaAmount(val)}
+                      style={{
+                        padding: '3px 8px',
+                        borderRadius: 4,
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        border: '1px solid #e2e8f0',
+                        background: contentQuotaAmount === val ? '#dbeafe' : '#f8fafc',
+                        color: contentQuotaAmount === val ? '#1d4ed8' : '#64748b',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      +{val}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+            </div>
+
+            {/* Reason */}
+            <div style={{ marginBottom: 20 }}>
+              <Field label="Motivo do ajuste administrativo (opcional):">
+                <input
+                  type="text"
+                  placeholder="Ex: Bônus de contratação, recarga avulsa, suporte a campanhas..."
+                  value={contentQuotaReason}
+                  onChange={(e) => setContentQuotaReason(e.target.value)}
+                  style={{ background: '#ffffff', width: '100%' }}
+                />
+              </Field>
+            </div>
+
+            {/* Buttons */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: 10,
+                marginBottom: 20,
+              }}
+            >
+              <Button
+                secondary
+                type="button"
+                disabled={savingContentQuota}
+                onClick={() => setSelectedUserForContentQuota(null)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                busy={savingContentQuota}
+                type="button"
+                onClick={handleSaveContentQuota}
+                style={{ background: '#b45309', borderColor: '#b45309', color: '#ffffff' }}
+              >
+                Confirmar Atribuição
+              </Button>
+            </div>
+
+            {/* Ledger History */}
+            <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 14 }}>
+              <h4
+                style={{
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: '#334155',
+                  margin: '0 0 10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                <History size={15} color="#64748b" />
+                Histórico de Movimentações de Cotas
+              </h4>
+              {selectedUserForContentQuota.quota_transactions &&
+              selectedUserForContentQuota.quota_transactions.length > 0 ? (
+                <div
+                  style={{
+                    maxHeight: '180px',
+                    overflowY: 'auto',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: 8,
+                  }}
+                >
+                  <table
+                    style={{
+                      width: '100%',
+                      borderCollapse: 'collapse',
+                      fontSize: '12px',
+                      textAlign: 'left',
+                    }}
+                  >
+                    <thead>
+                      <tr
+                        style={{
+                          background: '#f8fafc',
+                          borderBottom: '1px solid #e2e8f0',
+                          color: '#64748b',
+                        }}
+                      >
+                        <th style={{ padding: '6px 10px', fontWeight: 600 }}>Data / Hora</th>
+                        <th style={{ padding: '6px 10px', fontWeight: 600 }}>Tipo</th>
+                        <th style={{ padding: '6px 10px', fontWeight: 600 }}>Qtd</th>
+                        <th style={{ padding: '6px 10px', fontWeight: 600 }}>Saldo Resultante</th>
+                        <th style={{ padding: '6px 10px', fontWeight: 600 }}>Origem / Motivo</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedUserForContentQuota.quota_transactions.map((tx) => {
+                        const isCredit =
+                          tx.type === 'ASSIGNMENT' ||
+                          tx.type === 'REFUND' ||
+                          tx.type === 'ADJUSTMENT';
+                        const isDebit = tx.type === 'CONSUMPTION';
+                        return (
+                          <tr key={tx.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                            <td
+                              style={{
+                                padding: '6px 10px',
+                                color: '#64748b',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {new Date(tx.created_at).toLocaleDateString(locale, {
+                                day: '2-digit',
+                                month: '2-digit',
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </td>
+                            <td style={{ padding: '6px 10px' }}>
+                              <span
+                                style={{
+                                  padding: '1px 6px',
+                                  borderRadius: 4,
+                                  fontSize: '10px',
+                                  fontWeight: 700,
+                                  background: isCredit
+                                    ? '#ecfdf5'
+                                    : isDebit
+                                      ? '#fef2f2'
+                                      : '#eff6ff',
+                                  color: isCredit ? '#047857' : isDebit ? '#b91c1c' : '#1d4ed8',
+                                }}
+                              >
+                                {isCredit ? 'CRÉDITO' : isDebit ? 'DÉBITO' : 'AJUSTE'}
+                              </span>
+                            </td>
+                            <td
+                              style={{
+                                padding: '6px 10px',
+                                fontWeight: 700,
+                                color: isCredit ? '#047857' : isDebit ? '#b91c1c' : '#0f172a',
+                              }}
+                            >
+                              {isCredit ? `+${tx.amount}` : isDebit ? `-${tx.amount}` : `${tx.amount}`}
+                            </td>
+                            <td
+                              style={{ padding: '6px 10px', fontWeight: 600, color: '#b45309' }}
+                            >
+                              🪙 {tx.balance_after}
+                            </td>
+                            <td
+                              style={{
+                                padding: '6px 10px',
+                                color: '#64748b',
+                                fontStyle: tx.description ? 'normal' : 'italic',
+                              }}
+                            >
+                              {tx.description || tx.reason || tx.source || 'Movimentação do sistema'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p
+                  style={{
+                    fontSize: '12px',
+                    color: '#94a3b8',
+                    margin: 0,
+                    fontStyle: 'italic',
+                  }}
+                >
+                  Nenhuma movimentação de cotas registrada ainda.
                 </p>
               )}
             </div>

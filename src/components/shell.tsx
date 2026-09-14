@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { Brand, Copyright, useT, api, Modal, Empty } from './ui';
 import { ThemeToggle } from './theme-toggle';
+import { QuotaBadge } from './quota-badge';
 const navigation = [
   ['dashboard', LayoutDashboard],
   ['contents', SquareCheck],
@@ -120,6 +121,7 @@ export function Shell({
             <Search size={19} />
             <input aria-label={t('search')} name="q" placeholder={t('search')} minLength={2} />
           </form>
+          <QuotaBadge />
           <ThemeToggle />
           <button
             className="icon-button"

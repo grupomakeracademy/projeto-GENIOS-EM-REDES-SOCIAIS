@@ -1260,61 +1260,226 @@ details a {
   padding-top: 25px;
   line-height: 1.6;
 }
-.publishing-networks {
-  margin-top: 45px;
-  padding-top: 35px;
-  border-top: 1px solid var(--line);
+/* Editorial cards: styles deliberately scoped to the four requested sections. */
+.memory-timeline > div,
+.purpose-rows article,
+.audience-list article,
+.flow-step {
+  position: relative;
+  background: linear-gradient(125deg, #fff, #f9faff);
+  border: 1px solid #dce2f3;
+  border-radius: 18px;
+  box-shadow:
+    0 8px 25px #253b7308,
+    inset 0 1px 0 #fff;
+  transform: perspective(900px) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg));
+  transition:
+    transform 0.35s ease,
+    box-shadow 0.35s ease,
+    border-color 0.35s ease;
 }
-.publishing-networks h3 {
-  font-size: 28px;
-  letter-spacing: -1px;
-  line-height: 1.2;
+.memory-timeline > div {
+  padding: 24px 26px;
+  margin: 0 0 18px 20px;
 }
-.publishing-networks > p {
+.memory-timeline > div:before {
+  left: -25px;
+  top: 32px;
+  width: 9px;
+  height: 9px;
+  box-shadow: 0 0 0 6px #edf0fb;
+}
+.memory-timeline {
+  position: relative;
+}
+.memory-timeline:before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 34px;
+  bottom: 50px;
+  width: 1px;
+  background: linear-gradient(#ccd3e8, #4657f4);
+}
+.memory-timeline .memory-next {
+  background: linear-gradient(115deg, #eef0ff, #fff);
+  border-color: #bdc6ff;
+}
+.memory-timeline span {
   font-size: 13px;
-  color: var(--muted);
-  margin-top: 15px;
 }
-.publishing-networks > div {
+.memory-timeline strong {
+  font-size: 18px;
+  line-height: 1.45;
+}
+.memory-timeline p {
+  font-size: 15px;
+}
+.memory-timeline > small {
+  font-size: 12px;
+  line-height: 1.6;
+  display: block;
+  padding-left: 20px;
+}
+.memory > div > p,
+.audience > div > p {
+  font-size: 17px;
+}
+.purpose-rows {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0 30px;
-  margin-top: 22px;
+  gap: 18px;
 }
-.publishing-networks > div > a {
-  display: grid;
-  grid-template-columns: 1fr 15px;
-  gap: 8px;
-  padding: 17px 0;
-  border-bottom: 1px solid var(--line);
-}
-.publishing-networks strong {
-  font-weight: 500;
-  font-size: 13px;
-}
-.publishing-networks a > span {
-  font-size: 11px;
-  color: var(--muted);
-  grid-row: 2;
-}
-.publishing-networks a > svg {
-  grid-column: 2;
-  grid-row: 1/3;
-  align-self: center;
-  color: var(--blue);
-}
-.publishing-networks a:hover strong {
-  color: var(--blue);
-}
-.whatsapp-distribution {
-  display: flex;
-  gap: 10px;
+.purpose-rows article {
+  padding: 30px;
+  grid-template-columns: 40px 1fr 1.2fr 30px;
   align-items: center;
-  font-size: 11px !important;
-  padding-top: 12px;
 }
-.whatsapp-distribution svg {
-  color: #397964;
+.purpose-rows article > span {
+  padding: 0;
+  font-size: 13px;
+  color: var(--blue);
+}
+.purpose-rows strong {
+  font-size: 17px;
+  line-height: 1.5;
+}
+.purpose-rows p {
+  font-size: 15px;
+  max-width: 440px;
+}
+.purpose > small {
+  font-size: 13px;
+}
+.purpose-rows article > svg {
+  transition: transform 0.3s;
+}
+.audience-list {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+}
+.audience-list article,
+.audience-list article:first-child {
+  padding: 25px;
+}
+.audience-list article > svg {
+  background: #edf0ff;
+  width: 36px;
+  height: 36px;
+  padding: 8px;
+  border-radius: 12px;
+}
+.audience-list h3 {
+  font-size: 20px;
+  line-height: 1.4;
+}
+.audience-list p {
+  font-size: 15px;
+}
+.audience .button {
+  font-size: 14px;
+}
+.autonomy .section-intro > p {
+  font-size: 17px;
+}
+.mode-switch {
+  padding: 6px;
+  border-radius: 14px;
+  box-shadow: inset 0 1px 5px #24326308;
+}
+.mode-switch button {
+  font-size: 14px;
+  padding: 15px 22px;
+  border-radius: 10px;
+  transition:
+    background 0.25s,
+    color 0.25s,
+    box-shadow 0.25s;
+}
+.mode-switch button[aria-pressed='true'] {
+  box-shadow: 0 5px 16px #3b4b9b12;
+}
+.flow {
+  gap: 18px;
+}
+.flow-step {
+  padding: 26px 22px;
+  min-height: 150px;
+  gap: 26px;
+  animation: flow-appear 0.5s ease both;
+}
+.flow-step:nth-child(2) {
+  animation-delay: 0.07s;
+}
+.flow-step:nth-child(3) {
+  animation-delay: 0.14s;
+}
+.flow-step:nth-child(4) {
+  animation-delay: 0.21s;
+}
+.flow-step > span {
+  font-size: 13px;
+  color: var(--blue);
+}
+.flow-step strong {
+  font-size: 17px;
+  line-height: 1.4;
+}
+.flow-step.human {
+  background: linear-gradient(125deg, #e8ecff, #f9faff);
+  border-color: #99a7ff;
+  box-shadow: 0 12px 30px #4657f414;
+}
+.autonomy-demo > p {
+  font-size: 16px;
+  max-width: 850px;
+}
+.autonomy-demo > small {
+  font-size: 13px;
+  line-height: 1.7;
+}
+.motion-card.card-in-view {
+  animation: editorial-appear 0.65s ease both;
+}
+.motion-card:nth-child(2) {
+  animation-delay: 0.08s;
+}
+.motion-card:nth-child(3) {
+  animation-delay: 0.16s;
+}
+@keyframes editorial-appear {
+  from {
+    opacity: 0.6;
+    translate: 0 22px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+@keyframes flow-appear {
+  from {
+    opacity: 0.5;
+    translate: 0 12px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  .memory-timeline > div:hover,
+  .purpose-rows article:hover,
+  .audience-list article:hover,
+  .flow-step:hover {
+    transform: perspective(900px) translateY(-5px) rotateX(var(--tilt-x, 0deg))
+      rotateY(var(--tilt-y, 0deg));
+    box-shadow: 0 20px 40px #394d9514;
+    border-color: #aab7f5;
+  }
+  .purpose-rows article:hover > svg {
+    transform: translate(3px, -3px);
+  }
 }
 @media (min-width: 1600px) {
   .hero-inner {
@@ -1762,6 +1927,57 @@ details a {
   }
   .hero-baseline {
     font-size: 9px;
+  }
+}
+@media (max-width: 760px) {
+  .memory-timeline strong {
+    font-size: 17px;
+  }
+  .memory-timeline > div {
+    padding: 21px;
+  }
+  .memory > div > p,
+  .audience > div > p,
+  .autonomy .section-intro > p {
+    font-size: 16px;
+  }
+  .purpose-rows article {
+    padding: 22px 18px;
+    grid-template-columns: 23px 1fr 20px;
+  }
+  .purpose-rows strong {
+    font-size: 16px;
+  }
+  .purpose-rows p {
+    font-size: 15px;
+  }
+  .audience-list article,
+  .audience-list article:first-child {
+    padding: 22px 18px;
+    gap: 14px;
+  }
+  .audience-list h3 {
+    font-size: 18px;
+  }
+  .flow {
+    gap: 12px;
+  }
+  .flow-step {
+    min-height: 138px;
+    padding: 20px 16px;
+  }
+  .flow-step strong {
+    font-size: 16px;
+  }
+  .mode-switch button {
+    padding: 13px 10px;
+    font-size: 13px;
+  }
+  .autonomy-demo > p {
+    font-size: 15px;
+  }
+  .autonomy-demo > small {
+    font-size: 12px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

@@ -1,4 +1,51 @@
 import { test, expect } from '@playwright/test';
+test('product narrative follows scrolling in both directions', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/');
+  for (const kind of ['creation', 'planning']) {
+    const section = page.locator(`.product-${kind}`);
+    const seek = async (progress: number) => {
+      await section.evaluate((el, p) => window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY + (el.getBoundingClientRect().height - innerHeight) * p, behavior: 'instant' }), progress);
+    };
+    await seek(.7);
+    await expect(section.locator('.product-toolbar button[aria-pressed=true]')).toHaveText(kind === 'creation' ? 'Operação em Kanban' : 'Calendário de conteúdos');
+    await seek(.4);
+    await expect(section.locator('.product-toolbar button[aria-pressed=true]')).toHaveText(kind === 'creation' ? 'Conteúdos em Lista' : 'Rotina do agente');
+  }
+});
+test('premium font, demonstration pause and real product controls', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/');
+  await page.evaluate(() => document.fonts.ready);
+  expect(await page.locator('body').evaluate((el) => getComputedStyle(el).fontFamily)).toMatch(
+    /manrope/i,
+  );
+  await page.getByRole('button', { name: 'Pausar demonstração' }).click();
+  const pausedStage = await page.locator('.hero-demo').getAttribute('class');
+  await page.waitForTimeout(2400);
+  expect(await page.locator('.hero-demo').getAttribute('class')).toBe(pausedStage);
+  await page.getByRole('button', { name: 'Retomar demonstração' }).click();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(page.getByRole('button', { name: 'Pausar demonstração' })).toBeDisabled();
+  const creation = page.locator('.product-creation');
+  await creation.getByRole('button', { name: 'Operação em Kanban' }).click();
+  await expect(creation.locator('.product-screen img.active')).toHaveAttribute(
+    'src',
+    '/product/kanban.webp',
+  );
+  await creation.getByRole('button', { name: 'Ampliar tela real' }).click();
+  await expect(creation.locator('dialog')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(creation.locator('dialog')).not.toBeVisible();
+  await creation.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: 'test-results/commercial-product.png' });
+  expect(
+    await creation
+      .locator('.product-screen img.active')
+      .evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0),
+  ).toBe(true);
+  await expect(page.locator('.testimonial-section')).toHaveCount(0);
+});
 async function fill(page: import('@playwright/test').Page) {
   await page.getByLabel('Nome da empresa').fill('Empresa de teste & criação');
   await page.getByLabel('E-mail', { exact: true }).fill('teste@example.com');
@@ -96,7 +143,7 @@ test('public API rejects origin, invalid data and large bodies', async ({ reques
   ).toBe(413);
   expect((await request.get('/api/leads')).status()).toBe(405);
 });
-test('responsive widths and public content accurately distinguish networks', async ({ page }) => {
+test('responsive widths and removed section leaves no container', async ({ page }) => {
   for (const width of [360, 768, 1024, 1920]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/');
@@ -104,6 +151,6 @@ test('responsive widths and public content accurately distinguish networks', asy
       true,
     );
   }
-  await expect(page.locator('.publishing-networks')).toContainText('Instagram');
-  await expect(page.locator('.whatsapp-distribution')).toContainText('Não é tratado como autopost');
+  await expect(page.locator('.publishing-networks, .whatsapp-distribution')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: /Da criação à publicação/ })).toHaveCount(0);
 });

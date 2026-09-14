@@ -24,7 +24,7 @@ export async function PATCH(request: Request) {
 
     const body = await request.json();
     const actionSchema = z.object({
-      action: z.enum(['status', 'quota', 'reset_password']),
+      action: z.enum(['status', 'quota', 'reset_password', 'assign_content_quota']),
     });
     const { action } = actionSchema.parse(body);
 
@@ -187,6 +187,77 @@ export async function PATCH(request: Request) {
       });
 
       return Response.json({ ok: true, email: targetEmail });
+    }
+
+    if (action === 'assign_content_quota') {
+      const { userId, amount, mode, reason } = z
+        .object({
+          userId: z.string().uuid(),
+          amount: z.number().int().min(0).max(1000000),
+          mode: z.enum(['add', 'set', 'ADD', 'SET']).transform((m) => m.toLowerCase() as 'add' | 'set'),
+          reason: z.string().max(500).optional(),
+        })
+        .parse(body);
+
+      // Find user's workspace
+      const { data: member } = await db
+        .from('workspace_members')
+        .select('workspace_id')
+        .eq('user_id', userId)
+        .limit(1)
+        .maybeSingle();
+      const workspaceId = member?.workspace_id || ctx.workspaceId;
+
+      const res = await db.rpc('assign_user_quota', {
+        p_user_id: userId,
+        p_amount: amount,
+        p_mode: mode,
+        p_reason: reason?.trim() || 'Ajuste administrativo',
+        p_admin_email: ctx.user.email || null,
+        p_admin_id: ctx.user.id,
+        p_workspace_id: workspaceId,
+      });
+
+      if (res.error) {
+        throw new AppError(res.error.message || 'database_error', 400);
+      }
+
+      await db.from('audit_logs').insert({
+        workspace_id: workspaceId,
+        actor: ctx.user.id,
+        event: 'USER_CONTENT_QUOTA_ASSIGNED',
+        metadata: {
+          target_user_id: userId,
+          amount,
+          mode,
+          reason: reason?.trim() || null,
+          admin_email: ctx.user.email,
+          result: res.data,
+        },
+      });
+
+      // Fetch updated profile quota balance
+      const { data: updatedProfile } = await db
+        .from('profiles')
+        .select('content_quota_balance, content_quota_total_assigned, content_quota_total_consumed')
+        .eq('id', userId)
+        .single();
+
+      // Fetch latest transaction for this user
+      const { data: latestTx } = await db
+        .from('quota_transactions')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      return Response.json({
+        ok: true,
+        data: res.data,
+        profile: updatedProfile,
+        transaction: latestTx ? { ...latestTx, admin_email: ctx.user.email } : null,
+      });
     }
 
     throw new AppError('invalid_input', 400);

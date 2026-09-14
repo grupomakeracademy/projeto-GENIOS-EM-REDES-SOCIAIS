@@ -16,11 +16,14 @@ import {
   LeadForm,
 } from '../components/experience';
 import { faqs, testimonials } from '../lib/content';
+import { CardMotion } from '../components/card-motion';
+import { HeroDemo, ProductReveal, Testimonials } from '../components/product-experience';
 
 export default function Page() {
   const login = process.env.PRIVATE_LOGIN_URL || 'http://127.0.0.1:3001/login';
   return (
     <>
+      <CardMotion />
       <a className="skip-link" href="#conteudo">
         Ir para o conteúdo
       </a>
@@ -50,47 +53,7 @@ export default function Page() {
                 Conheça uma nova forma de criar <span>↓</span>
               </a>
             </div>
-            <div
-              className="hero-art"
-              aria-label="Estratégia, identidade e memória conectadas ao Gênio"
-            >
-              <div className="art-coordinate top">Sua marca. Um universo de possibilidades.</div>
-              <div className="hero-orbit orbit-one" />
-              <div className="hero-orbit orbit-two" />
-              <div className="hero-orbit orbit-three" />
-              <div className="hero-core">
-                <Mark />
-              </div>
-              <div className="orbital-label label-strategy">
-                <TargetIcon />
-                Estratégia
-              </div>
-              <div className="orbital-label label-identity">
-                <Fingerprint size={17} />
-                Identidade
-              </div>
-              <div className="orbital-label label-memory">
-                <Layers3 size={17} />
-                Memória
-              </div>
-              <div className="content-slip">
-                <div>
-                  <span className="slip-dot" />
-                  Da sua essência ao seu próximo conteúdo
-                  <ArrowUpRight size={17} />
-                </div>
-                <div className="slip-lines">
-                  <i />
-                  <i />
-                  <i />
-                </div>
-                <span className="slip-signature">
-                  <Mark small />
-                  Criado com contexto.
-                </span>
-              </div>
-              <span className="art-coordinate bottom">INTELIGÊNCIA COM A SUA IDENTIDADE</span>
-            </div>
+            <HeroDemo />
           </div>
           <div className="hero-baseline">
             <span>Uma inteligência especializada na sua empresa.</span>
@@ -158,6 +121,7 @@ export default function Page() {
           </div>
           <BrandJourney />
         </section>
+        <ProductReveal kind="creation" />
         <section className="memory section">
           <div>
             <h2>
@@ -252,6 +216,7 @@ export default function Page() {
             Quero entender como funcionaria <ArrowRight size={17} />
           </a>
         </section>
+        <ProductReveal kind="planning" />
         <section className="audience section">
           <div>
             <h2>
@@ -327,19 +292,8 @@ export default function Page() {
           <a className="text-link" href="#conversa">
             Quero conhecer o Gênio na prática <ArrowRight size={17} />
           </a>
-          {testimonials.length > 0 && (
-            <div className="testimonials">
-              {testimonials.map((t) => (
-                <figure key={t.name}>
-                  <blockquote>{t.quote}</blockquote>
-                  <figcaption>
-                    {t.name} · {t.role}
-                  </figcaption>
-                </figure>
-              ))}
-            </div>
-          )}
         </section>
+        <Testimonials items={testimonials} />
         <section className="faq section" id="duvidas">
           <div>
             <h2>
@@ -436,14 +390,5 @@ export default function Page() {
         </div>
       </footer>
     </>
-  );
-}
-function TargetIcon() {
-  return (
-    <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <circle cx="10" cy="10" r="7" stroke="currentColor" />
-      <circle cx="10" cy="10" r="3" stroke="currentColor" />
-      <path d="M10 10L18 2" stroke="currentColor" />
-    </svg>
   );
 }

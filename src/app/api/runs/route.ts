@@ -87,6 +87,15 @@ export async function PATCH(request: Request) {
         .maybeSingle(),
     );
     if (!updated) throw new AppError('conflict', 409);
+    await adminClient()
+      .from('agent_runs')
+      .update({ status: 'PENDING', error_code: null })
+      .eq('job_id', id);
+    await adminClient()
+      .from('content_items')
+      .update({ status: 'GENERATING' })
+      .eq('id', id)
+      .eq('workspace_id', ctx.workspaceId);
     return Response.json({ ok: true });
   } catch (e) {
     return fail(e);
@@ -97,6 +106,7 @@ export async function POST(request: Request) {
     const ctx = await guard(request, 'write');
     const input = z
       .object({
+        content_id: z.uuid().optional(),
         agent_id: z.uuid(),
         instruction: z.string().max(10000).default(''),
         channels: z.array(channelSchema).min(1),
@@ -108,6 +118,23 @@ export async function POST(request: Request) {
         idempotency_key: z.uuid(),
       })
       .parse(await request.json());
+
+    if (input.image_count <= 1) {
+      input.is_carousel = false;
+    }
+
+    if (input.content_id) {
+      const existing = checked(
+        await ctx.db
+          .from('content_items')
+          .select('id, status, agent_id')
+          .eq('id', input.content_id)
+          .eq('workspace_id', ctx.workspaceId)
+          .maybeSingle(),
+      );
+      if (!existing) throw new AppError('forbidden', 403);
+    }
+
     const agent = checked(
       await ctx.db
         .from('agents')
@@ -117,6 +144,26 @@ export async function POST(request: Request) {
         .maybeSingle(),
     );
     if (!agent) throw new AppError('forbidden', 403);
+
+    const qualityMultiplier =
+      input.image_quality === 'medium' || input.image_quality === 'high' ? 3 : 1;
+    const count = typeof input.image_count === 'number' && input.image_count > 0 ? input.image_count : 1;
+    const requiredQuota = count * input.channels.length * qualityMultiplier;
+
+    const { data: userProfile } = await ctx.db
+      .from('profiles')
+      .select('content_quota_balance')
+      .eq('id', ctx.user.id)
+      .maybeSingle();
+
+    const currentBalance = userProfile?.content_quota_balance ?? 100;
+    if (currentBalance < requiredQuota) {
+      throw new AppError(
+        `Saldo insuficiente de cotas (${currentBalance}). Esta geração requer ${requiredQuota} cotas. Solicite recarga ao Super Admin.`,
+        400,
+      );
+    }
+
     const ai = new AIService(ctx.workspaceId, undefined, input.agent_id);
     for (const purpose of [
       'orchestrator',
@@ -129,12 +176,72 @@ export async function POST(request: Request) {
     }
     const db = adminClient(),
       key = `${ctx.workspaceId}:manual:${input.idempotency_key}`;
+
+    if (input.content_id) {
+      await db
+        .from('content_items')
+        .update({
+          agent_id: input.agent_id,
+          topic: input.instruction.trim() || 'Conteúdo gerado',
+          strategy: {
+            image_style: input.image_style || 'Disney / Pixar',
+            image_quality: input.image_quality || 'low',
+            is_carousel: input.is_carousel ?? false,
+            cta: input.cta || '',
+            channels: input.channels,
+            image_count: input.image_count,
+            instruction: input.instruction.trim(),
+          },
+          status: 'GENERATING',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', input.content_id)
+        .eq('workspace_id', ctx.workspaceId);
+
+      await db.from('content_events').insert({
+        workspace_id: ctx.workspaceId,
+        content_id: input.content_id,
+        actor: ctx.user.id,
+        event: 'CONTENT_GENERATION_STARTED',
+        metadata: { origin: 'draft', channels: input.channels },
+      });
+
+      checked(
+        await db.from('background_jobs').upsert(
+          {
+            id: input.content_id,
+            workspace_id: ctx.workspaceId,
+            type: 'agent_run',
+            status: 'PENDING',
+            attempts: 0,
+            last_error: null,
+            completed_at: null,
+            lease_until: null,
+            lock_token: null,
+            scheduled_at: new Date().toISOString(),
+            payload: { ...input, created_by: ctx.user.id, origin: 'manual', content_id: input.content_id },
+            idempotency_key: key,
+          },
+          { onConflict: 'id' },
+        ),
+      );
+
+      return Response.json(
+        {
+          job: checked(
+            await db.from('background_jobs').select('id,status').eq('id', input.content_id).single(),
+          ),
+        },
+        { status: 202 },
+      );
+    }
+
     checked(
       await db.from('background_jobs').upsert(
         {
           workspace_id: ctx.workspaceId,
           type: 'agent_run',
-          payload: { ...input, created_by: ctx.user.id },
+          payload: { ...input, created_by: ctx.user.id, origin: 'manual' },
           idempotency_key: key,
         },
         { onConflict: 'idempotency_key', ignoreDuplicates: true },
