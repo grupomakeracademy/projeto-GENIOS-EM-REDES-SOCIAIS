@@ -9,3 +9,5 @@ test-results/
 .local-logs/
 task.md
 .agents/
+debug.log
+scratch/

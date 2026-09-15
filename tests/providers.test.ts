@@ -82,3 +82,18 @@ it('does not silently fall back to another provider', async () => {
   ).rejects.toThrow('provider_unavailable');
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
+it('preserves reference edit failures and does not launch a second paid request', async () => {
+  const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: { code: 'invalid_value', param: 'quality', message: 'private body' } }), {status:400}));
+  vi.stubGlobal('fetch', fetcher);
+  await expect(generateImage({provider:'openai',purpose:'image',model:'test'}, 'test', 'scene', '4:5', [{mimeType:'image/png',data:'aW1hZ2U='}]))
+    .rejects.toMatchObject({message:'provider_request_rejected',diagnostic:{status:400,code:'invalid_value',param:'quality'}});
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+it.each([
+  [400, 'content_policy_violation', 'content_policy'],
+  [429, 'insufficient_quota', 'provider_quota_exceeded'],
+  [404, 'model_not_found', 'provider_request_rejected'],
+])('classifies HTTP %s / %s without disguising it as invalid_output', async (status, code, expected) => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({error:{code}}), {status})));
+  await expect(apiJSON('https://api.openai.com/v1/images/generations','test',{},'openai')).rejects.toThrow(expected);
+});

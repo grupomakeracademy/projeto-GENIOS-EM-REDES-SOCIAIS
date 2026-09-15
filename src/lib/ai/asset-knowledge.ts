@@ -1,10 +1,12 @@
 import 'server-only';
 import { z } from 'zod';
 import crypto from 'node:crypto';
+import sharp from 'sharp';
 import { adminClient } from '@/lib/supabase/server';
 import { serverCredential } from '@/lib/ai/credentials';
 import { apiJSON, openAISchema } from '@/lib/ai/providers';
 import type { Agent } from '@/lib/domain';
+import type { ExactLogoPolicy } from './image-logo-policy';
 
 export const visualReferenceInterpretationSchema = z.object({
   reference_type: z.enum([
@@ -118,7 +120,7 @@ export async function processAssetKnowledge(
 
   const { data: asset, error: fetchErr } = await db
     .from('assets')
-    .select('id, workspace_id, name, mime_type, storage_path, content_hash, processing_status, textual_interpretation, summary_text')
+    .select('id, workspace_id, name, category, mime_type, storage_path, content_hash, processing_status, textual_interpretation, summary_text')
     .eq('id', assetId)
     .maybeSingle();
 
@@ -127,6 +129,16 @@ export async function processAssetKnowledge(
       assetId,
       status: 'failed',
       error: fetchErr?.message || 'asset_not_found',
+      visionCallsMade: 0,
+    };
+  }
+
+  // Categories that use raw original files directly (never consume vision/AI API tokens)
+  if ((asset as any).category === 'protected_identity' || (asset as any).category === 'exact_asset') {
+    return {
+      assetId,
+      status: 'already_processed',
+      summaryText: 'Ativo de arquivo direto (não requer interpretação de visão ou IA).',
       visionCallsMade: 0,
     };
   }
@@ -372,8 +384,8 @@ export async function processAssetKnowledge(
  * guaranteeing 0 vision token consumption during normal image generation.
  */
 export async function getAgentVisualKnowledge(agent: Agent): Promise<string> {
-  const rawIds = Array.isArray(agent.visual_settings.reference_ids)
-    ? agent.visual_settings.reference_ids.filter(
+  const rawIds = Array.isArray(agent.visual_settings?.reference_ids)
+    ? (agent.visual_settings.reference_ids as string[]).filter(
         (id) => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id),
       )
     : [];
@@ -382,21 +394,378 @@ export async function getAgentVisualKnowledge(agent: Agent): Promise<string> {
   if (!ids.length) return '';
 
   const db = adminClient();
-  const { data: assets, error } = await db
+  const { data: assets } = await db
     .from('assets')
-    .select('id, name, mime_type, processing_status, summary_text, textual_interpretation')
+    .select(
+      'id, name, category, identity_name, identity_type, is_master, asset_subtype, placement, mime_type, processing_status, summary_text, textual_interpretation',
+    )
     .in('id', ids);
 
-  // Only use already processed knowledge summaries - ZERO automatic vision calls
-  const validSummaries = (assets || [])
-    .filter((a) => a.summary_text && a.processing_status === 'processed')
-    .map((a) => `• ${a.name}: ${a.summary_text}`);
+  if (!assets || !assets.length) return '';
+
+  const validSummaries: string[] = [];
+  let hasExact = false;
+
+  for (const a of assets) {
+    if (a.category === 'exact_asset') {
+      hasExact = true;
+      validSummaries.push(
+        `• [ASSET EXATO - ${a.name} (${a.asset_subtype || 'Logo'})]: Arquivo oficial da marca. REGRA OBRIGATÓRIA: NÃO desenhar, recriar nem tentar gerar este logotipo na imagem via IA. Ele será aplicado exclusivamente em pós-produção com fidelidade e proporção original intactas. Mantenha a área (${a.placement || 'top_left'}) completamente limpa e desobstruída.`,
+      );
+    } else if (a.category === 'protected_identity') {
+      const role = a.is_master ? 'REFERÊNCIA MESTRE' : 'Variação secundária';
+      validSummaries.push(
+        `• [IDENTIDADE PROTEGIDA (${role}) - ${a.identity_name || a.name}]: ${a.summary_text || 'Identidade visual cadastrada para uso na cena.'}`,
+      );
+    } else if (a.summary_text && a.processing_status === 'processed') {
+      validSummaries.push(`• [REFERÊNCIA DE ESTILO - ${a.name}]: ${a.summary_text}`);
+    }
+  }
 
   if (!validSummaries.length) return '';
 
-  return [
+  const lines = [
     'BASE DE CONHECIMENTO DE IDENTIDADE VISUAL DA MARCA (REFERÊNCIAS PROCESSADAS):',
     ...validSummaries,
-    'DIRETRIZ GERAL: Reproduza estritamente as características cromáticas, estilo artístico, traços dos personagens/mascotes e símbolos descritos acima.',
-  ].join('\n');
+    'DIRETRIZ GERAL: Reproduza estritamente as características cromáticas, estilo artístico e traços visuais dos elementos descritos acima.',
+  ];
+
+  if (hasExact) {
+    lines.push(
+      'REGRA MANDATÓRIA DE ASSET EXATO (LOGOTIPO): Jamais gere logotipo, texto de marca ou selos na cena. O logotipo original exato é sobreposto em pós-produção.',
+    );
+  }
+
+  return lines.join('\n');
+}
+
+export interface VisualReferenceInput {
+  mimeType: string;
+  data: string; // base64
+  identityName?: string;
+  assetId?: string;
+}
+
+
+export function matchIdentityInScene(
+  scenePrompt: string,
+  identityName?: string | null,
+  _identityType?: string | null,
+): boolean {
+  const sceneText = (scenePrompt || '').toLowerCase();
+  const name = (identityName || '').toLowerCase().trim();
+
+  if (!name) return false;
+  if (sceneText.includes(name)) return true;
+
+  // Match individual significant words (>= 3 chars) of the identity name
+  const words = name
+    .split(/[\s,._-]+/)
+    .filter((w) => w.length >= 3 && !['com', 'para', 'dos', 'das', 'uma', 'seu', 'sua', 'the', 'and'].includes(w));
+  return words.some((w) => sceneText.includes(w));
+}
+
+/**
+ * Composites an exact asset (logo/badge/watermark) onto a base image using sharp.
+ */
+export async function compositeExactAssetBuffer(
+  baseImage: Buffer | Uint8Array,
+  overlayBytes: Buffer | Uint8Array,
+  placement: string = 'top_left',
+  scalePercent: number = 20,
+): Promise<Buffer> {
+  const baseImg = sharp(baseImage);
+  const metadata = await baseImg.metadata();
+  const width = metadata.width || 1024;
+  const height = metadata.height || 1024;
+
+  let processedOverlay: Buffer = Buffer.isBuffer(overlayBytes) ? overlayBytes : Buffer.from(overlayBytes);
+  let originalAssetWidth = 0;
+  let originalAssetHeight = 0;
+
+  try {
+    const rawOverlayMeta = await sharp(overlayBytes).metadata();
+    originalAssetWidth = rawOverlayMeta.width || 0;
+    originalAssetHeight = rawOverlayMeta.height || 0;
+    // Trim empty transparent padding (e.g. from Canva/Figma exports) so the visible artwork
+    processedOverlay = Buffer.isBuffer(overlayBytes) ? overlayBytes : Buffer.from(overlayBytes);
+  } catch {
+    processedOverlay = Buffer.isBuffer(overlayBytes) ? overlayBytes : Buffer.from(overlayBytes);
+  }
+
+  // Proportional sizing: percentage of base image width (clamped safely between 1% and 100%, default 20%)
+  const effectiveScale =
+    typeof scalePercent === 'number' && !Number.isNaN(scalePercent) && scalePercent > 0
+      ? Math.max(1, Math.min(100, scalePercent))
+      : 20;
+
+  const targetLogoWidth = Math.round(width * (effectiveScale / 100));
+
+  const resizedOverlay = await sharp(processedOverlay)
+    .resize({ width: targetLogoWidth })
+    .toBuffer();
+
+  const overlayMeta = await sharp(resizedOverlay).metadata();
+  const computedLogoWidth = overlayMeta.width || targetLogoWidth;
+  const computedLogoHeight = overlayMeta.height || targetLogoWidth;
+
+  const marginX = Math.round(width * 0.05);
+  const marginY = Math.round(height * 0.05);
+  if (computedLogoWidth > width || computedLogoHeight > height) throw new Error('invalid_input');
+
+  let left = marginX;
+  let top = marginY;
+
+  switch (placement) {
+    case 'top_right':
+      left = width - computedLogoWidth - marginX;
+      top = marginY;
+      break;
+    case 'bottom_left':
+      left = marginX;
+      top = height - computedLogoHeight - marginY;
+      break;
+    case 'bottom_right':
+      left = width - computedLogoWidth - marginX;
+      top = height - computedLogoHeight - marginY;
+      break;
+    case 'top_left':
+    default:
+      left = marginX;
+      top = marginY;
+      break;
+  }
+
+  // Ensure overlay fits within canvas boundaries
+  left = Math.max(0, Math.min(width - computedLogoWidth, left));
+  top = Math.max(0, Math.min(height - computedLogoHeight, top));
+
+  // Technical diagnostic logs for auditability without paid API calls
+  console.log('[Exact Asset Compositing]', {
+    finalImageWidth: width,
+    finalImageHeight: height,
+    scalePercent: effectiveScale,
+    originalAssetWidth,
+    originalAssetHeight,
+    targetLogoWidth,
+    computedLogoWidth,
+    computedLogoHeight,
+    overlayPosition: placement,
+    top,
+    left,
+    exactAssetApplied: true,
+  });
+
+  return await baseImg
+    .composite([{ input: resizedOverlay, left, top }])
+    .png()
+    .toBuffer();
+}
+
+/**
+ * Automated selection of visual references prior to image generation.
+ * RULE: Smallest number of visual references possible (0 when possible, 1 when needed, NEVER all).
+ * Returns only the single master reference for the identity required in the scene.
+ */
+export async function selectSceneVisualReferences(params: {
+  agent: Agent;
+  prompt: string;
+  channel?: string;
+  position?: number;
+  workspaceId?: string;
+}): Promise<VisualReferenceInput[]> {
+  const wsId = params.workspaceId || params.agent.workspace_id;
+  const db = adminClient();
+
+  const rawIds = Array.isArray(params.agent.visual_settings?.reference_ids)
+    ? (params.agent.visual_settings.reference_ids as string[]).filter(
+        (id) => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id),
+      )
+    : [];
+
+  let query = db
+    .from('assets')
+    .select('id, name, mime_type, storage_path, category, identity_name, identity_type, is_master')
+    .eq('workspace_id', wsId)
+    .eq('category', 'protected_identity')
+    .eq('is_master', true);
+
+  if (rawIds.length) {
+    query = query.in('id', rawIds);
+  }
+
+  const { data: masters, error } = await query;
+  if (error || !masters || !masters.length) {
+    return [];
+  }
+
+  // Inspect which identity is strictly involved in the scene
+  const matchedMasters = masters.filter((m) =>
+    matchIdentityInScene(params.prompt, m.identity_name, m.identity_type),
+  );
+
+  // If scene does not require a character -> 0 visual references sent
+  if (!matchedMasters.length) {
+    return [];
+  }
+
+  // Strictly at most 1 master reference (never all)
+  const selectedMaster = matchedMasters[0];
+
+  try {
+    const download = await db.storage.from('brand-assets').download(selectedMaster.storage_path);
+    if (download.error || !download.data) {
+      console.warn(`[Scene Reference Selection] Failed downloading master asset ${selectedMaster.id}:`, download.error);
+      return [];
+    }
+    const buffer = Buffer.from(await download.data.arrayBuffer());
+    return [
+      {
+        mimeType: selectedMaster.mime_type,
+        data: buffer.toString('base64'),
+        identityName: selectedMaster.identity_name || selectedMaster.name,
+        assetId: selectedMaster.id,
+      },
+    ];
+  } catch (err) {
+    console.error(`[Scene Reference Selection] Error processing master visual reference:`, err);
+    return [];
+  }
+}
+
+/**
+ * Checks if the agent has any active exact asset (like official logo) to instruct prompt generation.
+ */
+export async function getExactAssetPolicy(agent: Agent): Promise<ExactLogoPolicy & { guidance: string }> {
+  const exactAssets = await resolveExactAssets(agent);
+  const brandNames = [agent.name, ...Object.entries(agent.briefing || {})
+    .filter(([key]) => /^(company|company_name|brand|brand_name|business_name|nome_empresa|nome_marca)$/i.test(key))
+    .flatMap(([, value]) => typeof value === 'string' ? [value] : [])];
+  if (!exactAssets || !exactAssets.length) return { hasExactLogoAsset: false, brandNames, guidance: '' };
+
+  const hasLogo = exactAssets.some(
+    (a) => !a.asset_subtype || a.asset_subtype === 'logo',
+  );
+  const placements = exactAssets
+    .map((a) => a.placement || 'top_left')
+    .filter((p) => p !== 'manual' && p !== 'none');
+  const placementText = placements.length ? placements.join(', ') : 'canto reservado';
+
+  if (hasLogo) {
+    return { hasExactLogoAsset: true, brandNames, guidance: [
+      'REGRA MANDATÓRIA DE MARCA — PROIBIDO GERAR LOGOTIPO:',
+      '• Não desenhe, não gere, não recrie, não invente, não estilize e não alucine nenhum logotipo, nome de marca, wordmark, selo de marca, assinatura visual ou texto de marca na imagem.',
+      '• Não escreva o nome da marca como elemento gráfico decorativo.',
+      '• Não crie variações tipográficas da marca.',
+      '• Não adicione logotipo em cantos, rodapés, embalagens, telas, objetos, cadernos, uniformes, canecas ou qualquer outro elemento da cena.',
+      `• Quando a composição normalmente pedir marca visual, mantenha a área (${placementText}) completamente limpa e neutra.`,
+      '• O logotipo oficial será aplicado posteriormente em pós-produção a partir do arquivo original cadastrado.',
+      '• Diferenciação obrigatória: texto editorial da peça = permitido; marca / logotipo / selo / assinatura visual = terminantemente proibido para a IA.',
+      '• Portanto, a imagem gerada pela IA deve sair sem nenhum logotipo ou marca embutida.',
+    ].join('\n') };
+  }
+
+  return { hasExactLogoAsset: false, brandNames, guidance: [
+    'REGRA MANDATÓRIA DE MARCA — ASSET EXATO:',
+    '• NÃO gere elementos de marca, selos, marcas d’água ou assinaturas visuais na cena.',
+    '• O asset original será sobreposto exclusivamente em pós-produção a partir do arquivo original cadastrado.',
+    `• Mantenha a área (${placementText}) completamente limpa e desobstruída.`,
+  ].join('\n') };
+}
+
+export type ExactAsset = { id: string; name: string; workspace_id: string; category: string; asset_subtype: string | null; placement: string | null; scale_percent: number | null; storage_path: string; mime_type: string };
+
+/** Agent must be loaded server-side. reference_ids is the persisted, authorized link
+ * written by set_asset_agents, which also permits explicit cross-workspace sharing. */
+export async function resolveExactAssets(agent: Agent): Promise<ExactAsset[]> {
+  const ids = Array.isArray(agent.visual_settings?.reference_ids)
+    ? (agent.visual_settings.reference_ids as string[]).filter(id => /^[0-9a-f-]{36}$/i.test(id)) : [];
+  if (!ids.length) { console.log('[Exact Asset Selection]', { hasExactLogoAsset: false, agentId: agent.id, linkedAssetCount: 0 }); return []; }
+  const { data, error } = await adminClient().from('assets')
+    .select('id,name,workspace_id,category,asset_subtype,placement,scale_percent,storage_path,mime_type')
+    .eq('category', 'exact_asset').in('id', ids);
+  if (error) throw new Error('internal_error');
+  const assets = (data || []) as ExactAsset[];
+  const logos = assets.filter(a => !a.asset_subtype || a.asset_subtype === 'logo');
+  if (logos.length > 1) throw new Error('invalid_input'); // Never choose an arbitrary competing logo.
+  for (const asset of assets) console.log('[Exact Asset Selection]', {
+    hasExactLogoAsset: logos.length === 1, selectedExactAssetId: asset.id,
+    selectedExactAssetName: asset.name, category: asset.category, asset_subtype: asset.asset_subtype,
+    selectedExactAssetPlacement: asset.placement, selectedExactAssetScalePercent: asset.scale_percent,
+    storage_path: asset.storage_path, assetWorkspaceId: asset.workspace_id,
+    agentWorkspaceId: agent.workspace_id, agentId: agent.id, explicitlyLinked: ids.includes(asset.id),
+    active: true, // Assets have no active column: inclusion in reference_ids enables the asset.
+  });
+  return assets;
+}
+
+export async function getExactAssetGuidance(agent: Agent): Promise<string> {
+  return (await getExactAssetPolicy(agent)).guidance;
+}
+
+/**
+ * Applies exact assets (e.g. official logo) onto the generated image in post-processing.
+ */
+export async function applyExactAssets(params: {
+  imageBuffer: Buffer | Uint8Array;
+  agent: Agent;
+  ratio: string;
+  channel?: string;
+  workspaceId?: string;
+  expectedLogo?: boolean;
+}): Promise<Buffer> {
+  const wsId = params.workspaceId || params.agent.workspace_id;
+  const db = adminClient();
+
+  if (wsId !== params.agent.workspace_id) throw new Error('forbidden');
+  const exactAssets = await resolveExactAssets(params.agent);
+  const expectedLogo = params.expectedLogo || exactAssets.some(a => !a.asset_subtype || a.asset_subtype === 'logo');
+  if (!exactAssets || !exactAssets.length) {
+    if (expectedLogo) throw new Error('internal_error');
+    console.log('[Image Logo Policy]', { exactLogoPostApplied: false });
+    return Buffer.isBuffer(params.imageBuffer) ? params.imageBuffer : Buffer.from(params.imageBuffer);
+  }
+
+  // If there are multiple exact assets, prioritize logo if configured, or the first active one
+  const activeOverlay =
+    exactAssets.find(
+      (a) => (!a.asset_subtype || a.asset_subtype === 'logo') && a.placement && a.placement !== 'manual' && a.placement !== 'none',
+    ) ||
+    exactAssets.find(
+      (a) => a.placement && a.placement !== 'manual' && a.placement !== 'none',
+    );
+
+  if (!activeOverlay) {
+    if (expectedLogo) throw new Error('invalid_input');
+    console.log('[Image Logo Policy]', { exactLogoPostApplied: false });
+    return Buffer.isBuffer(params.imageBuffer) ? params.imageBuffer : Buffer.from(params.imageBuffer);
+  }
+
+  try {
+    if (expectedLogo && activeOverlay.asset_subtype && activeOverlay.asset_subtype !== 'logo') throw new Error('internal_error');
+    if (!['top_left','top_right','bottom_left','bottom_right'].includes(activeOverlay.placement || '') || !Number.isFinite(activeOverlay.scale_percent) || activeOverlay.scale_percent! <= 0 || activeOverlay.scale_percent! > 100) throw new Error('invalid_input');
+    const download = await db.storage.from('brand-assets').download(activeOverlay.storage_path);
+    if (download.error || !download.data) {
+      if (!activeOverlay.asset_subtype || activeOverlay.asset_subtype === 'logo') throw new Error('internal_error');
+      console.log('[Image Logo Policy]', { exactLogoPostApplied: false });
+      return Buffer.isBuffer(params.imageBuffer) ? params.imageBuffer : Buffer.from(params.imageBuffer);
+    }
+
+    const overlayBytes = Buffer.from(await download.data.arrayBuffer());
+    console.log('[Exact Asset Composition]', { selectedExactAssetId: activeOverlay.id, exactAssetBufferLoaded: overlayBytes.length > 0, exactAssetCompositionStarted: true });
+    const composited = await compositeExactAssetBuffer(
+      params.imageBuffer,
+      overlayBytes,
+      activeOverlay.placement!,
+      activeOverlay.scale_percent ?? 20,
+    );
+    console.log('[Image Logo Policy]', { exactLogoPostApplied: !activeOverlay.asset_subtype || activeOverlay.asset_subtype === 'logo' });
+    if (!composited.length || composited.equals(Buffer.from(params.imageBuffer))) throw new Error('internal_error');
+    console.log('[Exact Asset Composition]', { selectedExactAssetId: activeOverlay.id, exactAssetCompositionFinished: true, exactAssetApplied: true });
+    return composited;
+  } catch (err) {
+    console.log('[Image Logo Policy]', { exactLogoPostApplied: false });
+    if (!activeOverlay.asset_subtype || activeOverlay.asset_subtype === 'logo') throw new Error('internal_error');
+    return Buffer.isBuffer(params.imageBuffer) ? params.imageBuffer : Buffer.from(params.imageBuffer);
+  }
 }

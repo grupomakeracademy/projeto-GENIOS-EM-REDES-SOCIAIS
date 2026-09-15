@@ -76,6 +76,8 @@ export function fail(error: unknown) {
     'setup_required',
     'provider_missing',
     'invalid_output',
+    'provider_request_rejected',
+    'provider_quota_exceeded',
     'rate_limit',
     'timeout',
     'authentication_error',

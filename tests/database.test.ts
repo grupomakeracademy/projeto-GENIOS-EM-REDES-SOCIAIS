@@ -33,6 +33,7 @@ beforeAll(async () => {
     '202609120001_agent_isolation.sql',
     '202609130001_university.sql',
     '202609140007_persist_generated_draft_support.sql',
+    '202609140008_protected_identities_and_exact_assets.sql',
   ]) {
     const sql = await readFile(
       new URL(`../supabase/migrations/${filename}`, import.meta.url),
@@ -334,5 +335,58 @@ it('supports generating directly from an existing draft using persist_generated 
   expect(vars.rows).toHaveLength(1);
   expect(vars.rows[0].channel).toBe('instagram');
   expect(vars.rows[0].caption).toBe('Final generated caption');
+});
+
+it('supports protected identities and exact assets with single master reference enforcement', async () => {
+  const asset1 = '00000000-0000-4000-8000-000000000091';
+  const asset2 = '00000000-0000-4000-8000-000000000092';
+  const assetLogo = '00000000-0000-4000-8000-000000000093';
+
+  // 1. Insert protected identity asset 1 as master
+  await db.query(`
+    insert into public.assets (
+      id, workspace_id, name, category, identity_name, identity_type, is_master, mime_type, storage_path, size, created_by
+    ) values (
+      '${asset1}', '${wa}', 'Geninho Mestre.png', 'protected_identity', 'Geninho', 'genie', true, 'image/png', 'test/1.png', 1000, '${A}'
+    )
+  `);
+
+  // 2. Insert protected identity asset 2 as secondary
+  await db.query(`
+    insert into public.assets (
+      id, workspace_id, name, category, identity_name, identity_type, is_master, mime_type, storage_path, size, created_by
+    ) values (
+      '${asset2}', '${wa}', 'Geninho Secundario.png', 'protected_identity', 'Geninho', 'genie', false, 'image/png', 'test/2.png', 1000, '${A}'
+    )
+  `);
+
+  // 3. Insert exact asset
+  await db.query(`
+    insert into public.assets (
+      id, workspace_id, name, category, asset_subtype, placement, mime_type, storage_path, size, created_by
+    ) values (
+      '${assetLogo}', '${wa}', 'Logo Oficial Geninhos.png', 'exact_asset', 'logo', 'top_left', 'image/png', 'test/logo.png', 500, '${A}'
+    )
+  `);
+
+  // 4. Test set_master_asset RPC switches master
+  await db.query(`select public.set_master_asset('${wa}', '${asset2}', 'Geninho')`);
+
+  const rows = await db.query<Record<string, unknown>>(
+    `select id, is_master from public.assets where identity_name = 'Geninho' order by id`,
+  );
+  const a1 = rows.rows.find((r) => r.id === asset1);
+  const a2 = rows.rows.find((r) => r.id === asset2);
+
+  expect(a1?.is_master).toBe(false);
+  expect(a2?.is_master).toBe(true);
+
+  // Check exact asset columns
+  const logoRow = await db.query<Record<string, unknown>>(
+    `select id, category, asset_subtype, placement from public.assets where id = '${assetLogo}'`,
+  );
+  expect(logoRow.rows[0].category).toBe('exact_asset');
+  expect(logoRow.rows[0].asset_subtype).toBe('logo');
+  expect(logoRow.rows[0].placement).toBe('top_left');
 });
 

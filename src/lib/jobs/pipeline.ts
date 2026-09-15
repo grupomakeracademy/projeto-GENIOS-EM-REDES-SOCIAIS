@@ -16,7 +16,13 @@ import {
   type Channel,
 } from '@/lib/domain';
 import { research } from '@/lib/research/provider';
-import { getAgentVisualKnowledge } from '@/lib/ai/asset-knowledge';
+import {
+  getAgentVisualKnowledge,
+  selectSceneVisualReferences,
+  getExactAssetPolicy,
+} from '@/lib/ai/asset-knowledge';
+import { saveCompositedImage } from './save-composited-image';
+import { NO_LOGO_INSTRUCTION, suppressVisualBranding, type ExactLogoPolicy } from '@/lib/ai/image-logo-policy';
 export const jobSchema = z.object({
   id: z.uuid(),
   workspace_id: z.uuid(),
@@ -55,24 +61,43 @@ export function buildImagePromptContext(params: {
   ratio: string;
   companyOrName?: string;
   visualKnowledge?: string;
+  exactAssetGuidance?: string;
+  exactLogoPolicy?: ExactLogoPolicy;
 }) {
-  const styleSummary = params.style && params.style.length > 300
-    ? params.style.slice(0, 300)
-    : params.style;
+  const hasExactLogoGuidance = params.exactLogoPolicy?.hasExactLogoAsset === true;
+  const names = [...(params.exactLogoPolicy?.brandNames || []), params.companyOrName || ''];
+  const clean = (value: string | undefined) => hasExactLogoGuidance ? suppressVisualBranding(value, names) : value;
+  // Sanitize before truncation so a cut-off name/directive cannot escape the filter.
+  const scene = clean(params.prompt);
+  const cleanedStyle = clean(params.style);
+  const styleSummary = cleanedStyle?.slice(0, 300);
+  if (!scene?.trim()) throw new Error('invalid_output');
+  console.log('[Image Logo Policy]', {
+    hasExactLogoAsset: hasExactLogoGuidance,
+    antiLogoShieldActivated: hasExactLogoGuidance,
+    brandSuppressedFromImagePrompt: hasExactLogoGuidance,
+    brandNameSuppressionApplied: hasExactLogoGuidance,
+    visualContextSanitized: hasExactLogoGuidance && (scene !== params.prompt || cleanedStyle !== params.style || clean(params.visualKnowledge) !== params.visualKnowledge),
+    logoGenerationForbidden: hasExactLogoGuidance,
+    mandatoryAntiLogoInstructionInjected: hasExactLogoGuidance,
+  });
 
   return JSON.stringify({
-    scene: params.prompt,
+    image_generation_policy: hasExactLogoGuidance ? { logoGenerationForbidden: true, instruction: NO_LOGO_INSTRUCTION } : undefined,
+    scene,
     style: styleSummary || undefined,
     aspect_ratio: params.ratio,
     channel: params.channel,
     slide: params.position + 1,
-    brand: params.companyOrName || undefined,
-    brand_visual_dna: params.visualKnowledge || undefined,
-    composition_rules: `Full-bleed edge-to-edge background covering 100% canvas with NO white outer borders or letterboxing. All essential elements (text, titles, faces, characters, logos, buttons) MUST stay within the inner safe zone (at least 8% away from all borders) so that nothing is cut off or touching borders.`,
+    // When an exact asset logo is active, omit isolated brand name to prevent the model from hallucinating or drawing a logo/wordmark
+    brand: hasExactLogoGuidance ? undefined : (params.companyOrName || undefined),
+    brand_visual_dna: clean(params.visualKnowledge) || undefined,
+    exact_asset_guidance: params.exactAssetGuidance || undefined,
+    composition_rules: `Full-bleed edge-to-edge background covering 100% canvas with NO white outer borders or letterboxing. All essential elements (text, titles, faces, characters, buttons) MUST stay within the inner safe zone (at least 8% away from all borders) so that nothing is cut off or touching borders.${params.exactAssetGuidance ? ' ' + params.exactAssetGuidance : ''}`,
   });
 }
 
-async function saveImage(
+export async function saveImage(
   job: Job,
   agent: Agent,
   variant: { id: string; channel: Channel; image_prompts: string[] },
@@ -120,6 +145,16 @@ async function saveImage(
   }
 
   const visualKnowledge = await getAgentVisualKnowledge(agent);
+  const exactLogoPolicy = await getExactAssetPolicy(agent);
+  const exactAssetGuidance = exactLogoPolicy.guidance;
+  const visualReferences = await selectSceneVisualReferences({
+    agent,
+    prompt,
+    channel: variant.channel,
+    position,
+    workspaceId: job.workspace_id,
+  });
+
   const imagePromptContext = buildImagePromptContext({
     prompt,
     style: selectedStyle,
@@ -128,30 +163,26 @@ async function saveImage(
     ratio,
     companyOrName: (agent.briefing.company as string) || agent.name,
     visualKnowledge: visualKnowledge || undefined,
+    exactAssetGuidance: exactAssetGuidance || undefined,
+    exactLogoPolicy,
   });
 
-  // Zero vision tokens: references is strictly passed as empty array []
+  // Automated scene reference: 0 when possible, strictly 1 master when character is in scene, NEVER ALL
   const result = await ai.image(
     imagePromptContext,
     ratio,
-    [],
+    visualReferences,
     quality,
   );
   await renewLease(job);
+
+  // Apply exact assets (e.g. pristine official logo) post-generation
   // Preserve the authentic original image directly from the AI model
   const originalPath = `workspace/${job.workspace_id}/content/${job.id}/${variant.id}-${position}-original.png`;
-  checked(
-    await db.storage
-      .from('brand-assets')
-      .upload(originalPath, result.bytes, { contentType: result.mime || 'image/png', upsert: true }),
-  );
-  // Also save the display path pointing to the pristine generated image bytes
-  const path = `workspace/${job.workspace_id}/content/${job.id}/${variant.id}-${position}.png`;
-  checked(
-    await db.storage
-      .from('brand-assets')
-      .upload(path, result.bytes, { contentType: result.mime || 'image/png', upsert: true }),
-  );
+  // Also save the display path pointing to the final composited image bytes
+  const path = await saveCompositedImage({ agent, bytes: result.bytes, mime: result.mime || 'image/png', ratio, channel: variant.channel,
+    expectedLogo: exactLogoPolicy.hasExactLogoAsset, originalPath,
+    finalPath: `workspace/${job.workspace_id}/content/${job.id}/${variant.id}-${position}-${job.lock_token}-final.png` });
   checked(
     await db.from('content_media').upsert(
       {
@@ -193,7 +224,8 @@ export async function runPipeline(job: Job) {
       .single(),
   );
   const agent = { ...agentSchema.parse(raw), id: raw.id, workspace_id: job.workspace_id };
-  if (!agent.active) throw new Error('invalid_input');
+  // The UI's active switch controls the routine, not manual content creation.
+  if (input.origin === 'routine' && !agent.active) throw new Error('invalid_input');
   checked(
     await db
       .from('agent_runs')
@@ -692,6 +724,16 @@ export async function regenerate(job: Job) {
 
     // 5. Reconstruct prompt context faithfully using original settings snapshot + visual knowledge base
     const visualKnowledge = await getAgentVisualKnowledge(agent);
+    const exactLogoPolicy = await getExactAssetPolicy(agent);
+    const exactAssetGuidance = exactLogoPolicy.guidance;
+    const visualReferences = await selectSceneVisualReferences({
+      agent,
+      prompt,
+      channel: variant.channel,
+      position,
+      workspaceId: job.workspace_id,
+    });
+
     const imagePromptContext = buildImagePromptContext({
       prompt,
       style: selectedStyle,
@@ -700,32 +742,24 @@ export async function regenerate(job: Job) {
       ratio,
       companyOrName: (agent.briefing.company as string) || agent.name,
       visualKnowledge: visualKnowledge || undefined,
+      exactAssetGuidance: exactAssetGuidance || undefined,
+      exactLogoPolicy,
     });
 
     const ai = new AIService(job.workspace_id, job.id, agent.id);
-    // Zero vision tokens: references is strictly passed as empty array []
     const result = await ai.image(
       imagePromptContext,
       ratio,
-      [],
+      visualReferences,
       originalQuality,
     );
     await renewLease(job);
 
     // 6. Upload new version files without overwriting previous versions
     const originalPath = `workspace/${job.workspace_id}/content/${content_id}/${variant.id}-${position}-v${nextVersion}-original.png`;
-    checked(
-      await db.storage
-        .from('brand-assets')
-        .upload(originalPath, result.bytes, { contentType: result.mime || 'image/png', upsert: true }),
-    );
-
-    const path = `workspace/${job.workspace_id}/content/${content_id}/${variant.id}-${position}-v${nextVersion}.png`;
-    checked(
-      await db.storage
-        .from('brand-assets')
-        .upload(path, result.bytes, { contentType: result.mime || 'image/png', upsert: true }),
-    );
+    const path = await saveCompositedImage({ agent, bytes: result.bytes, mime: result.mime || 'image/png', ratio, channel: variant.channel,
+      expectedLogo: exactLogoPolicy.hasExactLogoAsset, originalPath,
+      finalPath: `workspace/${job.workspace_id}/content/${content_id}/${variant.id}-${position}-v${nextVersion}-${job.lock_token}-final.png` });
 
     // 7. Insert new version record into content_media
     checked(

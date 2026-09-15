@@ -1,0 +1,23 @@
+import 'server-only';
+import { adminClient } from '@/lib/supabase/server';
+import { checked } from '@/lib/security/context';
+import { applyExactAssets } from '@/lib/ai/asset-knowledge';
+import type { Agent } from '@/lib/domain';
+
+/** Shared by manual, routine and regeneration. No caller receives a raw display path. */
+export async function saveCompositedImage(params: {
+  agent: Agent; bytes: Buffer | Uint8Array; mime: string; ratio: string;
+  channel: string; expectedLogo: boolean; originalPath: string; finalPath: string;
+}) {
+  if (params.finalPath === params.originalPath || params.finalPath.endsWith('-original.png')) throw new Error('internal_error');
+  const finalBytes = await applyExactAssets({ imageBuffer: params.bytes, agent: params.agent,
+    ratio: params.ratio, channel: params.channel, expectedLogo: params.expectedLogo });
+  if (params.expectedLogo && Buffer.from(params.bytes).equals(finalBytes)) throw new Error('internal_error');
+  const storage = adminClient().storage.from('brand-assets');
+  checked(await storage.upload(params.originalPath, params.bytes, { contentType: params.mime, upsert: true }));
+  console.log('[Image Persistence]', { providerRawImageSaved: true });
+  checked(await storage.upload(params.finalPath, finalBytes, { contentType: params.expectedLogo ? 'image/png' : params.mime, upsert: true }));
+  console.log('[Image Persistence]', { finalImageSavedAfterComposition: true, exactAssetApplied: params.expectedLogo,
+    finalDisplaySource: params.finalPath });
+  return params.finalPath;
+}

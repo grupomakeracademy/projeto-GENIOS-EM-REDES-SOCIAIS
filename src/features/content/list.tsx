@@ -374,6 +374,30 @@ export function ContentList({
       window.scrollTo(0, Number(scroll));
       sessionStorage.removeItem('content-scroll');
     }
+
+    // Restore saved status filter and view mode when user returns from other sessions
+    try {
+      const savedStatus = localStorage.getItem('genios-content-status');
+      const hasStatusInUrl = params.has('status');
+      const savedViewMode = localStorage.getItem('genios-content-view');
+      const hasViewInUrl = params.has('view');
+
+      let shouldUpdate = false;
+      const p = new URLSearchParams(params.toString());
+
+      if (!hasStatusInUrl && savedStatus && savedStatus !== 'ALL') {
+        p.set('status', savedStatus);
+        shouldUpdate = true;
+      }
+      if (!hasViewInUrl && savedViewMode && (savedViewMode === 'list' || savedViewMode === 'kanban')) {
+        p.set('view', savedViewMode);
+        shouldUpdate = true;
+      }
+
+      if (shouldUpdate) {
+        startFilterTransition(() => router.replace(`/contents?${p.toString()}`, { scroll: false }));
+      }
+    } catch {}
   }, []);
 
   function changeView(m: 'list' | 'thumbnails' | 'kanban') {
@@ -388,6 +412,11 @@ export function ContentList({
       p.set(key, value);
     } else {
       p.delete(key);
+    }
+    if (key === 'status') {
+      try {
+        localStorage.setItem('genios-content-status', value || 'ALL');
+      } catch {}
     }
     startFilterTransition(() => router.push(`/contents?${p}`, { scroll: false }));
   }
@@ -523,14 +552,12 @@ export function ContentList({
         onSaved={() => {
           setRevision((v) => v + 1);
           const p = new URLSearchParams(params.toString());
-          p.delete('status');
           p.delete('page');
           router.push(`/contents?${p.toString()}`);
           router.refresh();
         }}
         onGenerated={() => {
           setRevision((v) => v + 1);
-          router.push('/contents?status=GENERATING');
           router.refresh();
         }}
       />

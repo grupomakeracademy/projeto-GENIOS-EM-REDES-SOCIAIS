@@ -83,11 +83,38 @@ export async function POST(request: Request) {
           .upload(path, bytes, { contentType: file.type, upsert: false }),
       );
 
+      const category = String(form.get('category') || 'reference').slice(0, 80);
+      const identityName = form.get('identity_name') ? String(form.get('identity_name')).trim().slice(0, 120) : null;
+      const identityType = form.get('identity_type') ? String(form.get('identity_type')).trim().slice(0, 50) : null;
+      const isMaster =
+        form.get('is_master') === 'true' ||
+        form.get('is_master') === '1' ||
+        form.get('is_master') === 'on';
+      const assetSubtype = form.get('asset_subtype') ? String(form.get('asset_subtype')).trim().slice(0, 50) : null;
+      const placement = form.get('placement') ? String(form.get('placement')).trim().slice(0, 50) : 'top_left';
+      const scalePercent = form.get('scale_percent')
+        ? Math.min(100, Math.max(5, parseInt(String(form.get('scale_percent')), 10) || 22))
+        : 22;
+
+      if (isMaster && identityName) {
+        await db
+          .from('assets')
+          .update({ is_master: false })
+          .eq('workspace_id', ctx.workspaceId)
+          .eq('identity_name', identityName);
+      }
+
       const result = await db.from('assets').insert({
         id,
         workspace_id: ctx.workspaceId,
         name: file.name.slice(0, 160),
-        category: String(form.get('category') || 'reference').slice(0, 80),
+        category,
+        identity_name: identityName,
+        identity_type: identityType,
+        is_master: isMaster,
+        asset_subtype: assetSubtype,
+        placement,
+        scale_percent: scalePercent,
         mime_type: file.type,
         storage_path: path,
         size: file.size,
@@ -142,6 +169,18 @@ export async function PATCH(request: Request) {
     const raw = await request.json();
     if (raw.action === 'reprocess') {
       const input = z.object({ id: z.uuid() }).parse(raw);
+      const db = adminClient();
+      const { data: assetItem } = await db
+        .from('assets')
+        .select('category')
+        .eq('id', input.id)
+        .maybeSingle();
+
+      // Never invoke vision/AI for protected identity or exact asset (0 API cost)
+      if (assetItem && (assetItem.category === 'protected_identity' || assetItem.category === 'exact_asset')) {
+        return Response.json({ ok: true, skipped: true, reason: 'unsupported_category', visionCallsMade: 0 });
+      }
+
       const result = await processAssetKnowledge(input.id, { force: true });
       return Response.json({ ok: true, ...result });
     }
@@ -165,15 +204,59 @@ export async function PATCH(request: Request) {
       );
       return Response.json({ ok: true });
     }
+    if (raw.action === 'set_master') {
+      const input = z.object({ id: z.uuid(), identity_name: z.string().min(1).max(120).optional() }).parse(raw);
+      const db = adminClient();
+      const { data: assetItem } = await db
+        .from('assets')
+        .select('id, workspace_id, identity_name, name')
+        .eq('id', input.id)
+        .eq('workspace_id', ctx.workspaceId)
+        .maybeSingle();
+      if (!assetItem) throw new AppError('asset_not_found', 404);
+
+      const idName = input.identity_name || assetItem.identity_name || assetItem.name.replace(/\.[^/.]+$/, '');
+      await db
+        .from('assets')
+        .update({ is_master: false })
+        .eq('workspace_id', ctx.workspaceId)
+        .eq('identity_name', idName)
+        .neq('id', input.id);
+
+      await db
+        .from('assets')
+        .update({ is_master: true, category: 'protected_identity', identity_name: idName })
+        .eq('id', input.id)
+        .eq('workspace_id', ctx.workspaceId);
+
+      return Response.json({ ok: true, is_master: true, identity_name: idName });
+    }
     const { id, ...input } = z
       .object({
         id: z.uuid(),
         name: z.string().min(1).max(160),
         category: z.string().min(1).max(80),
+        identity_name: z.string().max(120).nullable().optional(),
+        identity_type: z.string().max(50).nullable().optional(),
+        is_master: z.boolean().optional(),
+        asset_subtype: z.string().max(50).nullable().optional(),
+        placement: z.string().max(50).nullable().optional(),
+        scale_percent: z.number().int().min(5).max(100).nullable().optional(),
       })
       .parse(raw);
+
+    const db = adminClient();
+    if (input.is_master && input.identity_name) {
+      await db
+        .from('assets')
+        .update({ is_master: false })
+        .eq('workspace_id', ctx.workspaceId)
+        .eq('identity_name', input.identity_name)
+        .neq('id', id);
+    }
+
     checked(
-      await ctx.db
+      await db
         .from('assets')
         .update(input)
         .eq('id', id)

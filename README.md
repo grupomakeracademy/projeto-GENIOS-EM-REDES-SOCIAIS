@@ -94,13 +94,9 @@ Adicione o locale aos schemas de perfil e agente em `src/lib/domain.ts`, inclua 
 
 ## Worker e agendamento
 
-Em desenvolvimento, rode o worker continuamente em outro terminal:
+O servidor Node inicia automaticamente o consumo da fila e das rotinas por `src/instrumentation.ts`, tanto com `npm run dev` quanto com `npm start`. Não é necessário abrir um segundo terminal nem ligar um worker. O consumidor é sequencial, verifica trabalho a cada cinco segundos e continua após falhas temporárias de conexão. A criação manual independe da ativação da rotina do agente.
 
-```bash
-npm run worker
-```
-
-Em produção, execute `POST /api/jobs/tick` em um job agendado, enviando `Authorization: Bearer <WORKER_SECRET>`. Uma chamada processa um job elegível. Instâncias concorrentes são seguras porque o banco entrega cada job a apenas um worker durante o lease.
+Em hospedagem serverless, configure `JOBS_RUNNER_MODE=external` e um agendamento externo para `POST /api/jobs/tick`, com `Authorization: Bearer <WORKER_SECRET>`. O comando `npm run worker` permanece disponível somente para esse modo externo. Uma chamada processa um job elegível; o banco protege jobs concorrentes com leases. Para rotinas sem interrupções, o servidor ou agendamento deve permanecer disponível, inclusive com o navegador fechado.
 
 Datas são armazenadas em UTC e exibidas no fuso do workspace. Horários inexistentes ou ambíguos durante mudanças de horário de verão são rejeitados pelo domínio.
 
@@ -114,7 +110,7 @@ Quando `OPENAI_API_KEY` está presente, os padrões são `gpt-4.1` (orquestrador
 
 `node --conditions=react-server --env-file=.env.local --import tsx scripts/verify-ai.ts` verifica os modelos sem gerar conteúdo. A opção `--generate` realiza quatro chamadas cobradas de teste, sem modificar workspaces.
 
-No Windows, execute `Iniciar-Genios.ps1` para iniciar o servidor local e o worker em segundo plano. Logs ficam em `.local-logs`, ignorados pelo Git. O endereço local é `http://127.0.0.1:3001/login`; os processos precisam permanecer em execução no computador.
+No Windows, execute `Iniciar-Genios.ps1` para iniciar o servidor local com processamento integrado em segundo plano. Logs ficam em `.local-logs/server.log` e `.local-logs/server-error.log`, ignorados pelo Git. O endereço local é `http://127.0.0.1:3001/login`; o servidor e o computador precisam permanecer ligados. Em produção, use um serviço supervisionado com reinício automático.
 
 ```bash
 npm run typecheck

@@ -144,7 +144,8 @@ export function ContentDetail({
           throw new Error(json.error || 'Falha ao iniciar geração do rascunho.');
         }
 
-        router.push('/contents?status=GENERATING');
+        const returnTo = searchParams.get('returnTo') || '/contents';
+        router.push(returnTo);
         router.refresh();
       }, 'enqueued');
     } finally {
@@ -789,7 +790,8 @@ export function ContentDetail({
           router.refresh();
         }}
         onGenerated={() => {
-          router.push('/contents?status=GENERATING');
+          const returnTo = searchParams.get('returnTo') || '/contents';
+          router.push(returnTo);
           router.refresh();
         }}
       />

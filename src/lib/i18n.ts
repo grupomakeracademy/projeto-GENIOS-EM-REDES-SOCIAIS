@@ -500,6 +500,16 @@ const messages = {
     'The provider returned an invalid result.',
     'El proveedor devolvió un resultado no válido.',
   ],
+  provider_request_rejected: [
+    'O provedor recusou a configuração da imagem. O administrador deve verificar o modelo e os parâmetros.',
+    'The provider rejected the image configuration. Ask the administrator to check the model and parameters.',
+    'El proveedor rechazó la configuración de imagen. El administrador debe revisar el modelo y los parámetros.',
+  ],
+  provider_quota_exceeded: [
+    'O saldo ou limite de uso do provedor foi atingido. Entre em contato com o administrador.',
+    'The provider balance or usage limit has been reached. Contact the administrator.',
+    'Se alcanzó el saldo o límite del proveedor. Contacta al administrador.',
+  ],
   provider_unavailable: [
     'Provedor indisponível no momento.',
     'Provider currently unavailable.',

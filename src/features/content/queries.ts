@@ -60,8 +60,9 @@ export async function contentList(params: Record<string, string | undefined> = {
       for (const media of variant.content_media) {
         const signed = await ctx.db.storage
           .from('brand-assets')
-          .createSignedUrl(media.storage_path, 900);
+          .createSignedUrl(mediaDisplaySource(media.storage_path), 900);
         media.url = signed.data?.signedUrl;
       }
   return { items, total: result.count || 0, page, role: ctx.role };
 }
+import { mediaDisplaySource } from '@/lib/media-display-source';

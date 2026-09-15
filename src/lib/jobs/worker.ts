@@ -3,14 +3,16 @@ import { adminClient } from '@/lib/supabase/server';
 import { checked } from '@/lib/security/context';
 import { backoff, nextOccurrence } from './scheduling';
 import { jobSchema, runPipeline, regenerate, renewLease } from './pipeline';
+import { ProviderError } from '@/lib/ai/provider-error';
 export async function tick() {
   const db = adminClient(),
     now = new Date();
   const schedules = checked(
     await db
       .from('agent_schedules')
-      .select('*')
+      .select('*,agents!inner(active)')
       .eq('enabled', true)
+      .eq('agents.active', true)
       .lte('next_run_at', now.toISOString())
       .limit(50),
   );
@@ -74,6 +76,8 @@ export async function tick() {
       'provider_unavailable',
       'rate_limit',
       'invalid_output',
+      'provider_request_rejected',
+      'provider_quota_exceeded',
       'content_policy',
       'repetitive_topic',
       'unsupported_capability',
@@ -86,8 +90,14 @@ export async function tick() {
       error instanceof Error && safe.includes(error.message) ? error.message : 'internal_error';
     if (code === 'lease_lost') return { processed: false, id: job.id, status: 'LEASE_LOST' };
     const retry =
-      ['timeout', 'provider_unavailable', 'rate_limit'].includes(code) &&
+      ['timeout', 'provider_unavailable', 'rate_limit', 'invalid_output'].includes(code) &&
       job.attempts < job.max_attempts;
+    if (error instanceof ProviderError) {
+      const run = checked(await db.from('agent_runs').select('checkpoint').eq('job_id', job.id).maybeSingle());
+      if (run) checked(await db.from('agent_runs').update({
+        checkpoint: { ...run.checkpoint, provider_error: error.diagnostic },
+      }).eq('job_id', job.id));
+    }
     checked(
       await db
         .from('background_jobs')

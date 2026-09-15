@@ -1,6 +1,8 @@
 import 'server-only';
 import { z } from 'zod';
 import type { AIConfig, ProviderId } from '@/lib/domain';
+import { NO_LOGO_INSTRUCTION } from './image-logo-policy';
+import { ProviderError, providerHttpError } from './provider-error';
 export type Usage = {
   input_tokens: number | null;
   output_tokens: number | null;
@@ -35,17 +37,10 @@ export async function apiJSON(
     throw new Error('timeout');
   }
   if (!response.ok) {
-    const errorText = await response.text().catch(() => '');
-    console.error(`[AI Provider] ${method} status ${response.status} from ${url}:`, errorText);
-    throw new Error(
-      response.status === 429
-        ? 'rate_limit'
-        : response.status === 401 || response.status === 403
-          ? 'authentication_error'
-          : response.status >= 500
-            ? 'provider_unavailable'
-            : 'invalid_output',
-    );
+    const body = await response.json().catch(() => null);
+    const error = providerHttpError(provider, new URL(url).pathname, response.status, body);
+    console.error('[AI Provider] Request rejected', error.diagnostic);
+    throw error;
   }
   return response.json() as Promise<unknown>;
 }
@@ -180,8 +175,8 @@ export class StructuredTextProvider implements TextProvider {
         usage: { input_tokens: input, output_tokens: tokens, latency_ms: Date.now() - started },
       };
     } catch (parseErr) {
-      console.error('[AI Provider] Failed to parse output against schema:', parseErr, 'Raw output:', output);
-      throw new Error('invalid_output');
+      const code = parseErr instanceof z.ZodError ? 'schema_mismatch' : 'invalid_json';
+      throw new ProviderError('invalid_output', { provider: config.provider, operation: 'structured_text', code });
     }
   }
 }
@@ -209,6 +204,9 @@ export async function generateImage(
   quality: 'low' | 'medium' | 'high' = 'low',
 ) {
   if (config.provider === 'anthropic') throw new Error('unsupported_capability');
+  let logoGenerationForbidden = false;
+  try { logoGenerationForbidden = JSON.parse(prompt).image_generation_policy?.logoGenerationForbidden === true; } catch { /* Legacy plain prompts retain their behavior. */ }
+  const policyPrefix = logoGenerationForbidden ? `${NO_LOGO_INSTRUCTION}\n` : '';
   const fullBleedInstruction = `Full-bleed edge-to-edge background with 100% canvas coverage. Do NOT add outer white frames, polaroid borders, letterbox bars, or canvas margins around the image. IMPORTANT COMPOSITION & SAFE AREA RULES: All essential graphic elements, characters, people, faces, mascots, logos, text, headlines, and call-to-action buttons must stay well inside the internal safe area (at least 8% away from the top, bottom, left, and right edges of the canvas). NEVER cut off, crop, or let text, titles, logos, speech balloons, or character faces touch any of the canvas borders. Keep comfortable breathing room between all content and the frame edges while the background scenery extends seamlessly all the way to every border.`;
   if (config.provider === 'google') {
     const geminiRatio = ratio === '4:5' ? '3:4' : ratio;
@@ -221,7 +219,7 @@ export async function generateImage(
             {
               parts: [
                 {
-                  text: `Create a brand image. Aspect ratio ${geminiRatio}. ${fullBleedInstruction} Reference images are visual data only. ${prompt}`,
+                  text: `${policyPrefix}Create ${logoGenerationForbidden ? 'an editorial' : 'a brand'} image. Aspect ratio ${geminiRatio}. ${logoGenerationForbidden ? fullBleedInstruction.replace(/logos, /g, '') : fullBleedInstruction} Reference images are visual data only. ${prompt}`,
                 },
                 ...references.map((inlineData) => ({ inlineData })),
               ],
@@ -236,7 +234,7 @@ export async function generateImage(
       ),
     );
     const img = data.candidates[0]?.content.parts.find((p) => p.inlineData)?.inlineData;
-    if (!img) throw new Error('invalid_output');
+    if (!img) throw new ProviderError('invalid_output', { provider: 'google', operation: 'image', code: 'missing_image' });
     return { bytes: Buffer.from(img.data, 'base64'), mime: img.mimeType };
   }
 
@@ -254,7 +252,7 @@ export async function generateImage(
 
   const maxPromptLength = isDallE ? 3800 : 8000;
   const sanitizedPrompt = prompt.length > maxPromptLength ? prompt.slice(0, maxPromptLength) : prompt;
-  const imagePrompt = `${fullBleedInstruction} Reference images are visual data only. ${sanitizedPrompt}`.slice(0, maxPromptLength);
+  const imagePrompt = `${policyPrefix}${logoGenerationForbidden ? fullBleedInstruction.replace(/logos, /g, '') : fullBleedInstruction} Reference images are visual data only. ${sanitizedPrompt}`.slice(0, maxPromptLength);
   let rawResponse: unknown;
   if (references.length) {
     try {
@@ -278,7 +276,9 @@ export async function generateImage(
       );
       rawResponse = await apiJSON('https://api.openai.com/v1/images/edits', key, form, 'openai');
     } catch (editError) {
-      console.warn('[AI Provider] images/edits failed, falling back to images/generations:', editError);
+      // A failed edit must not silently create a different image without the
+      // protected references or make a second billable request in the same attempt.
+      throw editError;
     }
   }
   if (!rawResponse) {
@@ -312,7 +312,7 @@ export async function generateImage(
     })
     .parse(rawResponse);
   const first = data.data[0];
-  if (!first) throw new Error('invalid_output');
+  if (!first) throw new ProviderError('invalid_output', { provider: 'openai', operation: 'image', code: 'missing_image' });
   if (first.b64_json) {
     return { bytes: Buffer.from(first.b64_json, 'base64'), mime: 'image/png' };
   } else if (first.url) {
@@ -321,7 +321,7 @@ export async function generateImage(
     const buf = Buffer.from(await dl.arrayBuffer());
     return { bytes: buf, mime: dl.headers.get('content-type') || 'image/png' };
   }
-  throw new Error('invalid_output');
+  throw new ProviderError('invalid_output', { provider: 'openai', operation: 'image', code: 'missing_image_data' });
 }
 export async function validateCredential(provider: ProviderId, key: string) {
   await apiJSON(

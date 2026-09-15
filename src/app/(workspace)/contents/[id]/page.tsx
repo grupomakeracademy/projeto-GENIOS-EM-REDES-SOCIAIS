@@ -32,7 +32,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   for (const variant of item.content_variants)
     for (const media of variant.content_media) {
       media.url = (
-        await ctx.db.storage.from('brand-assets').createSignedUrl(media.storage_path, 900)
+        await ctx.db.storage.from('brand-assets').createSignedUrl(mediaDisplaySource(media.storage_path), 900)
       ).data?.signedUrl;
     }
   const events = checked(
@@ -69,3 +69,4 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
     />
   );
 }
+import { mediaDisplaySource } from '@/lib/media-display-source';

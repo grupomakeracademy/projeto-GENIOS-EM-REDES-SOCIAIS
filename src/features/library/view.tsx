@@ -51,6 +51,10 @@ export function Library({
     [savingUserId, setSavingUserId] = useState<string | null>(null),
     [viewDnaAsset, setViewDnaAsset] = useState<Asset | null>(null),
     [reprocessingId, setReprocessingId] = useState<string | null>(null),
+    [uploadCategory, setUploadCategory] = useState<
+      'reference' | 'protected_identity' | 'exact_asset'
+    >('reference'),
+    [settingMasterId, setSettingMasterId] = useState<string | null>(null),
     [quotaEditValues, setQuotaEditValues] = useState<
       Record<string, { value: number; unlimited: boolean }>
     >({});
@@ -264,8 +268,20 @@ export function Library({
                   <p style={{ color: '#dc2626', fontSize: '12px', marginTop: 4 }}>{batchError}</p>
                 )}
               </Field>
-              <Field label={t('category')}>
-                <input name="category" required defaultValue="reference" maxLength={80} />
+              <Field label="Categoria do Ativo">
+                <select
+                  name="category"
+                  value={uploadCategory}
+                  onChange={(e) =>
+                    setUploadCategory(
+                      e.target.value as 'reference' | 'protected_identity' | 'exact_asset',
+                    )
+                  }
+                >
+                  <option value="reference">DNA Visual Geral</option>
+                  <option value="protected_identity">Identidade Protegida</option>
+                  <option value="exact_asset">Asset Exato</option>
+                </select>
               </Field>
               <div style={{ paddingTop: 24 }}>
                 <Button
@@ -280,6 +296,95 @@ export function Library({
                 </Button>
               </div>
             </div>
+
+            {uploadCategory === 'protected_identity' && (
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 12,
+                  marginTop: 12,
+                  padding: 14,
+                  background: '#f8fafc',
+                  borderRadius: 8,
+                  border: '1px solid #cbd5e1',
+                }}
+              >
+                <Field label="Nome da Identidade">
+                  <input
+                    name="identity_name"
+                    placeholder="Ex: Nome da pessoa, personagem, produto ou elemento visual recorrente..."
+                    required
+                    maxLength={120}
+                  />
+                </Field>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 4 }}>
+                  <label className="check" style={{ fontSize: '13px', margin: 0, fontWeight: 600 }}>
+                    <input type="checkbox" name="is_master" value="true" defaultChecked />
+                    ⭐ Definir como Referência Mestre
+                  </label>
+                  <span style={{ fontSize: '12px', color: '#64748b', marginLeft: 24 }}>
+                    Apenas uma imagem por identidade pode ser mestre e ela será usada como base quando essa identidade for necessária em uma cena.
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {uploadCategory === 'exact_asset' && (
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                  gap: 12,
+                  marginTop: 12,
+                  padding: 14,
+                  background: '#f5f3ff',
+                  borderRadius: 8,
+                  border: '1px solid #ddd6fe',
+                }}
+              >
+                <Field label="Tipo do Asset Exato">
+                  <select name="asset_subtype" defaultValue="logo">
+                    <option value="logo">Logotipo</option>
+                    <option value="badge">Selo / Emblema</option>
+                    <option value="watermark">Marca d'Água</option>
+                    <option value="other">Outro</option>
+                  </select>
+                </Field>
+                <Field label="Posicionamento Automático">
+                  <select name="placement" defaultValue="top_left">
+                    <option value="top_left">Canto Superior Esquerdo (Padrão)</option>
+                    <option value="top_right">Canto Superior Direito</option>
+                    <option value="bottom_left">Canto Inferior Esquerdo</option>
+                    <option value="bottom_right">Canto Inferior Direito</option>
+                    <option value="manual">Sem aplicação automática (Manual)</option>
+                  </select>
+                </Field>
+                <Field label="Tamanho (% da largura da imagem)">
+                  <input
+                    type="number"
+                    name="scale_percent"
+                    min={5}
+                    max={100}
+                    step={1}
+                    defaultValue={22}
+                    placeholder="22"
+                  />
+                  <small style={{ color: '#64748b' }}>
+                    Padrão recomendado: 20% a 22%. Fidelidade original preservada.
+                  </small>
+                </Field>
+                <div style={{ gridColumn: '1 / -1', fontSize: '12px', color: '#6b21a8' }}>
+                  ℹ️ <strong>Asset Exato:</strong> Nunca redesenhado pela IA. O arquivo original é aplicado após a geração com fidelidade total.
+                </div>
+              </div>
+            )}
+
+            {uploadCategory === 'reference' && (
+              <div style={{ fontSize: '12px', color: '#64748b', marginTop: 10 }}>
+                ℹ️ <strong>DNA Visual Geral:</strong> Somente texto pré-processado descrevendo estilo, paleta, composição e atmosfera, sem uso de visão.
+              </div>
+            )}
           </form>
           <Notice {...action} />
         </Card>
@@ -288,118 +393,327 @@ export function Library({
       <div style={{ height: 20 }} />
       {items.length ? (
         <div className="content-grid">
-          {items.map((asset) => (
-            <Card key={asset.id}>
-              {asset.mime_type.startsWith('image/') && asset.url ? (
-                <img className="asset-image" src={asset.url} loading="lazy" alt={asset.name} />
-              ) : (
-                <div className="empty">
-                  <File size={38} />
-                </div>
-              )}
-              <h3 style={{ marginTop: 16, overflowWrap: 'anywhere' }}>{asset.name}</h3>
-              <small>
-                {asset.category} · {Math.ceil(asset.size / 1024)} KB
-              </small>
-              <AssetAgents assetId={asset.id} agents={agents} canEdit={canEdit} />
-              
-              {/* Status da Base de Conhecimento Pré-Processada */}
-              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
-                {asset.processing_status === 'processed' ? (
-                  <span
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      padding: '3px 8px',
-                      borderRadius: 999,
-                      background: '#ecfdf5',
-                      color: '#047857',
-                      fontSize: '11px',
-                      fontWeight: 600,
-                      border: '1px solid #a7f3d0',
-                    }}
-                    title="Ativo interpretado e consolidado na base textual (0 chamadas de visão na geração)"
-                  >
-                    ✓ DNA Visual Ativo
-                  </span>
-                ) : asset.processing_status === 'failed' ? (
-                  <span
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      padding: '3px 8px',
-                      borderRadius: 999,
-                      background: '#fef2f2',
-                      color: '#b91c1c',
-                      fontSize: '11px',
-                      fontWeight: 600,
-                      border: '1px solid #fecaca',
-                    }}
-                    title={asset.processing_error || 'Erro no processamento'}
-                  >
-                    ⚠ Falha
-                  </span>
-                ) : reprocessingId === asset.id || asset.processing_status === 'processing' ? (
-                  <span
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      padding: '3px 8px',
-                      borderRadius: 999,
-                      background: '#fffbeb',
-                      color: '#b45309',
-                      fontSize: '11px',
-                      fontWeight: 600,
-                      border: '1px solid #fde68a',
-                    }}
-                  >
-                    ⏳ Analisando agora...
-                  </span>
+          {items.map((asset) => {
+            const isProtectedIdentity =
+              asset.category === 'protected_identity' ||
+              asset.category === 'Gênio / Mascote';
+            const isExactAsset = asset.category === 'exact_asset';
+            const isVisualDna = !isProtectedIdentity && !isExactAsset;
+
+            return (
+              <Card key={asset.id}>
+                {asset.mime_type.startsWith('image/') && asset.url ? (
+                  <img className="asset-image" src={asset.url} loading="lazy" alt={asset.name} />
                 ) : (
-                  <span
+                  <div className="empty">
+                    <File size={38} />
+                  </div>
+                )}
+                <h3 style={{ marginTop: 16, overflowWrap: 'anywhere' }}>{asset.name}</h3>
+
+                {/* 1. Categoria */}
+                <div style={{ marginTop: 8, marginBottom: 8 }}>
+                  {isExactAsset ? (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        padding: '3px 9px',
+                        borderRadius: 6,
+                        background: '#f3e8ff',
+                        color: '#6b21a8',
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        border: '1px solid #d8b4fe',
+                      }}
+                    >
+                      🎯 Asset Exato
+                    </span>
+                  ) : isProtectedIdentity ? (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        padding: '3px 9px',
+                        borderRadius: 6,
+                        background: '#e0e7ff',
+                        color: '#3730a3',
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        border: '1px solid #c7d2fe',
+                      }}
+                    >
+                      👤 Identidade Protegida
+                    </span>
+                  ) : (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        padding: '3px 9px',
+                        borderRadius: 6,
+                        background: '#f1f5f9',
+                        color: '#334155',
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        border: '1px solid #cbd5e1',
+                      }}
+                    >
+                      🎨 DNA Visual Geral
+                    </span>
+                  )}
+                </div>
+
+                {/* 2. Agente que está associado */}
+                <AssetAgents assetId={asset.id} agents={agents} canEdit={canEdit} />
+
+                {/* 3. Nome da Identidade (se tiver sido informado) */}
+                {Boolean(asset.identity_name) && (
+                  <div
                     style={{
-                      display: 'inline-flex',
+                      marginTop: 8,
+                      fontSize: '12px',
+                      color: '#334155',
+                      display: 'flex',
                       alignItems: 'center',
-                      gap: 4,
-                      padding: '3px 8px',
-                      borderRadius: 999,
-                      background: '#f8fafc',
-                      color: '#64748b',
-                      fontSize: '11px',
-                      fontWeight: 500,
-                      border: '1px solid #e2e8f0',
+                      gap: 6,
+                      flexWrap: 'wrap',
                     }}
-                    title="Ativo original armazenado. Clique em 'Processar' se desejar extrair o DNA visual para geração."
                   >
-                    ⚪ Não processado
-                  </span>
+                    <span>
+                      <span style={{ color: '#64748b', fontWeight: 500 }}>Nome da Identidade:</span>{' '}
+                      <strong style={{ color: '#0f172a' }}>{asset.identity_name}</strong>
+                    </span>
+                    {isProtectedIdentity ? (
+                      asset.is_master ? (
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 3,
+                            padding: '1px 6px',
+                            borderRadius: 4,
+                            background: '#fef3c7',
+                            color: '#92400e',
+                            fontSize: '10px',
+                            fontWeight: 700,
+                            border: '1px solid #fcd34d',
+                          }}
+                          title="Referência Mestre: enviada apenas quando esta identidade for necessária na cena."
+                        >
+                          ⭐ Referência Mestre
+                        </span>
+                      ) : canEdit ? (
+                        <button
+                          type="button"
+                          disabled={settingMasterId === asset.id}
+                          onClick={async () => {
+                            setSettingMasterId(asset.id);
+                            try {
+                              await api('assets', 'PATCH', { action: 'set_master', id: asset.id });
+                              router.refresh();
+                            } catch (err) {
+                              console.error('Falha ao definir como mestre:', err);
+                            } finally {
+                              setSettingMasterId(null);
+                            }
+                          }}
+                          style={{
+                            background: '#fffbeb',
+                            border: '1px dashed #f59e0b',
+                            color: '#b45309',
+                            borderRadius: 4,
+                            fontSize: '10px',
+                            fontWeight: 600,
+                            padding: '1px 6px',
+                            cursor: 'pointer',
+                          }}
+                          title="Definir esta imagem como a referência visual mestre única da identidade"
+                        >
+                          {settingMasterId === asset.id ? 'Definindo...' : '⭐ Tornar Mestre'}
+                        </button>
+                      ) : null
+                    ) : null}
+                  </div>
                 )}
 
-                <div style={{ display: 'flex', gap: 4 }}>
-                  {asset.summary_text ? (
-                    <Button
-                      secondary
-                      style={{ padding: '2px 8px', fontSize: '11px', height: 24 }}
-                      onClick={() => setViewDnaAsset(asset)}
-                    >
-                      Ver DNA
-                    </Button>
-                  ) : null}
-                  {canEdit && (asset.processing_status !== 'processed' || !asset.summary_text) ? (
-                    <Button
-                      secondary
-                      busy={reprocessingId === asset.id}
-                      style={{ padding: '2px 8px', fontSize: '11px', height: 24 }}
-                      onClick={() => handleReprocess(asset.id)}
-                    >
-                      Processar
-                    </Button>
-                  ) : null}
+                {/* 4. Tamanho do arquivo */}
+                <div style={{ marginTop: 6, fontSize: '12px', color: '#64748b' }}>
+                  {isExactAsset
+                    ? `Sobreposição: ${asset.placement || 'top_left'} (${asset.scale_percent ?? 20}%) · ${Math.ceil(asset.size / 1024)} KB`
+                    : `${Math.ceil(asset.size / 1024)} KB`}
                 </div>
-              </div>
+
+                {/* 2. Status e Ação de Processamento */}
+                <div
+                  style={{
+                    marginTop: 10,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: 6,
+                  }}
+                >
+                  {isProtectedIdentity ? (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        padding: '3px 8px',
+                        borderRadius: 999,
+                        background: asset.is_master ? '#fef3c7' : '#f8fafc',
+                        color: asset.is_master ? '#92400e' : '#475569',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        border: asset.is_master ? '1px solid #fcd34d' : '1px solid #e2e8f0',
+                      }}
+                      title={
+                        asset.is_master
+                          ? 'Referência visual mestre direta enviada quando a identidade for necessária na cena.'
+                          : 'Identidade cadastrada. O arquivo original é utilizado diretamente.'
+                      }
+                    >
+                      {asset.is_master ? '⭐ Mestre visual direta' : '👤 Arquivo de identidade'}
+                    </span>
+                  ) : isExactAsset ? (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        padding: '3px 8px',
+                        borderRadius: 999,
+                        background: '#f3e8ff',
+                        color: '#6b21a8',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        border: '1px solid #d8b4fe',
+                      }}
+                      title="Arquivo original sobreposto com fidelidade 100% pós-geração."
+                    >
+                      🎯 Aplicação pós-geração
+                    </span>
+                  ) : asset.processing_status === 'processed' ? (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        padding: '3px 8px',
+                        borderRadius: 999,
+                        background: '#ecfdf5',
+                        color: '#047857',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        border: '1px solid #a7f3d0',
+                      }}
+                      title="Ativo interpretado e consolidado na base textual (0 chamadas de visão na geração)"
+                    >
+                      ✓ DNA Visual Ativo
+                    </span>
+                  ) : asset.processing_status === 'failed' ? (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        padding: '3px 8px',
+                        borderRadius: 999,
+                        background: '#fef2f2',
+                        color: '#b91c1c',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        border: '1px solid #fecaca',
+                      }}
+                      title={
+                        asset.processing_error === 'rate_limit'
+                          ? 'Limite temporário da OpenAI atingido (Rate limit). Clique em Processar para tentar novamente.'
+                          : asset.processing_error || 'Erro no processamento'
+                      }
+                    >
+                      ⚠ Falha ({asset.processing_error === 'rate_limit' ? 'Limite da API' : 'Erro'})
+                    </span>
+                  ) : reprocessingId === asset.id || asset.processing_status === 'processing' ? (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        padding: '3px 8px',
+                        borderRadius: 999,
+                        background: '#fffbeb',
+                        color: '#b45309',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        border: '1px solid #fde68a',
+                      }}
+                    >
+                      ⏳ Analisando agora...
+                    </span>
+                  ) : (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        padding: '3px 8px',
+                        borderRadius: 999,
+                        background: '#f8fafc',
+                        color: '#64748b',
+                        fontSize: '11px',
+                        fontWeight: 500,
+                        border: '1px solid #e2e8f0',
+                      }}
+                      title="Ativo original armazenado. Clique em 'Processar' se desejar extrair o DNA visual para geração."
+                    >
+                      ⚪ Não processado
+                    </span>
+                  )}
+
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {asset.summary_text ? (
+                      <Button
+                        secondary
+                        style={{ padding: '2px 8px', fontSize: '11px', height: 24 }}
+                        onClick={() => setViewDnaAsset(asset)}
+                      >
+                        Ver DNA
+                      </Button>
+                    ) : null}
+                    {canEdit ? (
+                      isProtectedIdentity || isExactAsset ? (
+                        <Button
+                          secondary
+                          disabled
+                          style={{
+                            padding: '2px 8px',
+                            fontSize: '11px',
+                            height: 24,
+                            opacity: 0.5,
+                            cursor: 'not-allowed',
+                          }}
+                          title="O processamento textual não se aplica a esta categoria. O arquivo original é utilizado diretamente."
+                        >
+                          Processar
+                        </Button>
+                      ) : (asset.processing_status !== 'processed' || !asset.summary_text) ? (
+                        <Button
+                          secondary
+                          busy={reprocessingId === asset.id}
+                          style={{ padding: '2px 8px', fontSize: '11px', height: 24 }}
+                          onClick={() => handleReprocess(asset.id)}
+                        >
+                          Processar
+                        </Button>
+                      ) : null
+                    ) : null}
+                  </div>
+                </div>
 
               <div className="form-row" style={{ marginTop: 15 }}>
                 <a className="button secondary" href={`/api/download?id=${asset.id}`}>
@@ -417,8 +731,9 @@ export function Library({
                 ) : null}
               </div>
             </Card>
-          ))}
-        </div>
+          );
+        })}
+      </div>
       ) : (
         <Card>
           <Empty title={t('emptyLibrary')} />
@@ -450,28 +765,145 @@ export function Library({
           <Field label={t('name')}>
             <input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
           </Field>
-          <Field label={t('category')}>
-            <input
+          <Field label="Categoria do Ativo">
+            <select
               value={edit.category}
-              onChange={(e) => setEdit({ ...edit, category: e.target.value })}
-            />
+              onChange={(e) =>
+                setEdit({
+                  ...edit,
+                  category: e.target.value as 'reference' | 'protected_identity' | 'exact_asset',
+                })
+              }
+            >
+              <option value="reference">DNA Visual Geral</option>
+              <option value="protected_identity">Identidade Protegida</option>
+              <option value="exact_asset">Asset Exato</option>
+            </select>
           </Field>
-          <Button
-            busy={action.busy}
-            onClick={() =>
-              action.act(async () => {
-                await api('assets', 'PATCH', {
-                  id: edit.id,
-                  name: edit.name,
-                  category: edit.category,
-                });
-                setEdit(null);
-                router.refresh();
-              })
-            }
-          >
-            {t('save')}
-          </Button>
+
+          {edit.category === 'protected_identity' && (
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+                margin: '10px 0',
+                padding: 14,
+                background: '#f8fafc',
+                borderRadius: 8,
+                border: '1px solid #cbd5e1',
+              }}
+            >
+              <Field label="Nome da Identidade">
+                <input
+                  value={edit.identity_name || ''}
+                  placeholder="Ex: Nome da pessoa, personagem, produto ou elemento visual recorrente..."
+                  onChange={(e) => setEdit({ ...edit, identity_name: e.target.value })}
+                />
+              </Field>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, paddingTop: 4 }}>
+                <label className="check" style={{ fontSize: '13px', margin: 0, fontWeight: 600 }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(edit.is_master)}
+                    onChange={(e) => setEdit({ ...edit, is_master: e.target.checked })}
+                  />
+                  ⭐ Definir como Referência Mestre
+                </label>
+                <span style={{ fontSize: '12px', color: '#64748b', marginLeft: 24 }}>
+                  Apenas uma imagem por identidade pode ser mestre e ela será usada como base quando essa identidade for necessária em uma cena.
+                </span>
+              </div>
+            </div>
+          )}
+
+          {edit.category === 'exact_asset' && (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                gap: 10,
+                margin: '10px 0',
+                padding: 12,
+                background: '#f5f3ff',
+                borderRadius: 8,
+                border: '1px solid #ddd6fe',
+              }}
+            >
+              <Field label="Tipo do Asset Exato">
+                <select
+                  value={edit.asset_subtype || 'logo'}
+                  onChange={(e) =>
+                    setEdit({ ...edit, asset_subtype: e.target.value as any })
+                  }
+                >
+                  <option value="logo">Logotipo</option>
+                  <option value="badge">Selo / Emblema</option>
+                  <option value="watermark">Marca d'Água</option>
+                  <option value="other">Outro</option>
+                </select>
+              </Field>
+              <Field label="Posicionamento">
+                <select
+                  value={edit.placement || 'top_left'}
+                  onChange={(e) =>
+                    setEdit({ ...edit, placement: e.target.value as any })
+                  }
+                >
+                  <option value="top_left">Canto Superior Esquerdo</option>
+                  <option value="top_right">Canto Superior Direito</option>
+                  <option value="bottom_left">Canto Inferior Esquerdo</option>
+                  <option value="bottom_right">Canto Inferior Direito</option>
+                  <option value="manual">Manual (Sem Sobreposição)</option>
+                </select>
+              </Field>
+              <Field label="Tamanho (% da largura)">
+                <input
+                  type="number"
+                  min={5}
+                  max={100}
+                  step={1}
+                  value={edit.scale_percent ?? 22}
+                  placeholder="20"
+                  onChange={(e) =>
+                    setEdit({ ...edit, scale_percent: Number(e.target.value) })
+                  }
+                />
+              </Field>
+              <div style={{ gridColumn: '1 / -1', fontSize: '11px', color: '#64748b' }}>
+                Padrão recomendado: 20% a 22%. A proporção e a fidelidade do arquivo original são sempre preservadas sem distorção.
+              </div>
+            </div>
+          )}
+
+          <div style={{ paddingTop: 10 }}>
+            <Button
+              busy={action.busy}
+              onClick={() =>
+                action.act(async () => {
+                  await api('assets', 'PATCH', {
+                    id: edit.id,
+                    name: edit.name,
+                    category: edit.category,
+                    identity_name:
+                      edit.category === 'protected_identity' ? edit.identity_name || null : null,
+                    is_master:
+                      edit.category === 'protected_identity' ? Boolean(edit.is_master) : false,
+                    asset_subtype:
+                      edit.category === 'exact_asset' ? edit.asset_subtype || 'logo' : null,
+                    placement:
+                      edit.category === 'exact_asset' ? edit.placement || 'top_left' : null,
+                    scale_percent:
+                      edit.category === 'exact_asset' ? (edit.scale_percent ?? 20) : null,
+                  });
+                  setEdit(null);
+                  router.refresh();
+                })
+              }
+            >
+              {t('save')}
+            </Button>
+          </div>
         </Modal>
       ) : null}
 

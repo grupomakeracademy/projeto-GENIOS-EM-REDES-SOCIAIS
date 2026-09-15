@@ -151,6 +151,18 @@ export type Media = {
   model?: string;
   created_at?: string;
 };
+export const assetCategorySchema = z.enum(['reference', 'protected_identity', 'exact_asset']);
+export type AssetCategory = z.infer<typeof assetCategorySchema>;
+
+export const identityTypeSchema = z.enum(['genie', 'teacher', 'mascot', 'avatar']);
+export type IdentityType = z.infer<typeof identityTypeSchema>;
+
+export const assetSubtypeSchema = z.enum(['logo', 'badge', 'watermark', 'other']);
+export type AssetSubtype = z.infer<typeof assetSubtypeSchema>;
+
+export const exactAssetPlacementSchema = z.enum(['top_left', 'top_right', 'bottom_left', 'bottom_right', 'manual']);
+export type ExactAssetPlacement = z.infer<typeof exactAssetPlacementSchema>;
+
 export type Asset = {
   id: string;
   name: string;
@@ -167,6 +179,12 @@ export type Asset = {
   processor_model?: string | null;
   textual_interpretation?: Record<string, unknown> | null;
   summary_text?: string | null;
+  identity_name?: string | null;
+  identity_type?: IdentityType | string | null;
+  is_master?: boolean;
+  asset_subtype?: AssetSubtype | string | null;
+  placement?: ExactAssetPlacement | string | null;
+  scale_percent?: number | null;
 };
 export const providerSchema = z.enum(['openai', 'anthropic', 'google']);
 export type ProviderId = z.infer<typeof providerSchema>;
