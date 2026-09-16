@@ -1,5 +1,6 @@
 export type Locale = 'pt-BR' | 'en-US' | 'es-ES';
 const messages = {
+  import: ['Importar', 'Import', 'Importar'],
   generationQueue: ['Execuções de conteúdo', 'Content runs', 'Ejecuciones de contenido'],
   queuePending: [
     'Na fila — aguardando processamento',

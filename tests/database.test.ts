@@ -1,12 +1,36 @@
 import { PGlite } from '@electric-sql/pglite';
 import { readFile } from 'node:fs/promises';
 import { beforeAll, afterAll, it, expect } from 'vitest';
+import {randomUUID} from 'node:crypto';
 let db: PGlite;
 const A = '00000000-0000-4000-8000-000000000001',
   B = '00000000-0000-4000-8000-000000000002',
   E = '00000000-0000-4000-8000-000000000003',
   V = '00000000-0000-4000-8000-000000000004';
 let wa: string, wb: string, agentA: string;
+it('imports original media once into existing content and isolates drafts by workspace',async()=>{
+  const id=randomUUID();
+  await db.query(`insert into content_imports(id,workspace_id,agent_id,created_by,storage_path,mime_type,width,height) values($1,$2,$3,$4,$5,'image/jpeg',720,1280)`,[id,wa,agentA,A,`workspace/${wa}/imports/${id}/original.jpg`]);
+  const hidden=await asUser(B,`select id from content_imports where id='${id}'`);
+  expect(hidden.rows).toHaveLength(0);
+  const visible=await asUser(A,`select id from content_imports where id='${id}'`);
+  expect(visible.rows).toHaveLength(1);
+  const sql=`select finalize_content_import($1,$2,$3,'instagram','Minha legenda') as id`;
+  const first=await db.query<{id:string}>(sql,[wa,id,A]);
+  const second=await db.query<{id:string}>(sql,[wa,id,A]);
+  expect(first.rows[0].id).toBe(second.rows[0].id);
+  const media=await db.query(`select m.storage_path,m.provider,m.aspect_ratio from content_media m join content_variants v on v.id=m.variant_id where v.content_id=$1`,[first.rows[0].id]);
+  expect(media.rows).toEqual([{storage_path:`workspace/${wa}/imports/${id}/original.jpg`,provider:'upload',aspect_ratio:'720:1280'}]);
+  await expect(db.query(sql,[wa,id,V])).rejects.toThrow('forbidden');
+});
+it('allows only one atomic magic claim and protects image storage scope',async()=>{
+  const id=randomUUID();
+  await db.query(`insert into content_imports(id,workspace_id,agent_id,created_by,storage_path,mime_type,width,height) values($1,$2,$3,$4,$5,'image/png',100,100)`,[id,wa,agentA,A,`workspace/${wa}/imports/${id}/original.png`]);
+  const claim=`update content_imports set magic_used_at=now() where id=$1 and magic_used_at is null returning id`;
+  expect((await db.query(claim,[id])).rows).toHaveLength(1);
+  expect((await db.query(claim,[id])).rows).toHaveLength(0);
+  await expect(db.query('update content_imports set storage_path=$1 where id=$2',[`workspace/${wb}/imports/fake.png`,id])).rejects.toThrow();
+});
 async function asUser(id: string, sql: string) {
   await db.exec(
     `set role authenticated; select set_config('request.jwt.claim.sub','${id}',false);`,
@@ -34,6 +58,11 @@ beforeAll(async () => {
     '202609130001_university.sql',
     '202609140007_persist_generated_draft_support.sql',
     '202609140008_protected_identities_and_exact_assets.sql',
+    '202609140002_quota_system_and_routine_settings.sql',
+    '202609140004_fix_stored_proc_defaults.sql',
+    '202609150001_content_imports.sql',
+    '202609150002_caption_import_management.sql',
+    '202609150003_import_caption_save.sql',
   ]) {
     const sql = await readFile(
       new URL(`../supabase/migrations/${filename}`, import.meta.url),
@@ -70,6 +99,77 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await db.close();
+});
+async function newImport(){const id=randomUUID();await db.query(`insert into content_imports(id,workspace_id,agent_id,created_by,storage_path,mime_type,width,height) values($1,$2,$3,$4,$5,'image/jpeg',720,1280)`,[id,wa,agentA,A,`workspace/${wa}/imports/${id}/original.jpg`]);return id;}
+async function captionCall(id:string,kind:string,request:string,phase:string,output:string|null=null,actor=A){return (await db.query<{result:{cost:number;caption:string;balance:number;completed:boolean}}>('select caption_operation($1,$2,\'import\',$3,$4,$5,$6,$7) as result',[wa,actor,id,kind,request,phase,output])).rows[0].result;}
+it('gives independent free successes, charges subsequent use once through the central ledger',async()=>{
+ const id=await newImport();await db.query('update profiles set content_quota_balance=10 where id=$1',[A]);
+ for(const kind of ['magic','storytelling']){
+  const free=randomUUID();expect((await captionCall(id,kind,free,'begin')).cost).toBe(0);
+  const first=await captionCall(id,kind,free,'finish','Dor.\n\nSolução.\n\nCTA.');expect(first.balance).toBe(kind==='magic'?10:9);
+  const paid=randomUUID();expect((await captionCall(id,kind,paid,'begin')).cost).toBe(1);
+  const second=await captionCall(id,kind,paid,'finish','Texto revisado');
+  expect(await captionCall(id,kind,paid,'finish','Repetição')).toEqual(second);
+  expect((await db.query('select id from quota_transactions where metadata->>\'caption_operation_id\'=$1',[paid])).rows).toHaveLength(1);
+ }
+ expect((await db.query<{content_quota_balance:number}>('select content_quota_balance from profiles where id=$1',[A])).rows[0].content_quota_balance).toBe(8);
+ expect((await db.query<{caption:string}>('select caption from content_imports where id=$1',[id])).rows[0].caption).toBe('');
+});
+it('failure retains the free use and concurrent requests cannot both claim it',async()=>{
+ const id=await newImport(),one=randomUUID();await captionCall(id,'magic',one,'begin');
+ await expect(captionCall(id,'magic',randomUUID(),'begin')).rejects.toThrow('operation_in_progress');
+ await captionCall(id,'magic',one,'fail');
+ const retry=randomUUID();expect((await captionCall(id,'magic',retry,'begin')).cost).toBe(0);
+ await captionCall(id,'magic',retry,'finish','Sucesso');
+ await expect(captionCall(id,'magic',randomUUID(),'begin',null,V)).rejects.toThrow('forbidden');
+});
+it('insufficient funds at completion preserve counters and prevent negative balance',async()=>{
+ const id=await newImport(),free=randomUUID();await captionCall(id,'magic',free,'begin');await captionCall(id,'magic',free,'finish','Primeiro');
+ await db.query('update profiles set content_quota_balance=1 where id=$1',[A]);
+ const paid=randomUUID();await captionCall(id,'magic',paid,'begin');
+ // Another existing quota consumer can use the balance while a text request is running.
+ await db.query('select deduct_content_quota($1,1)',[A]);
+ await expect(captionCall(id,'magic',paid,'finish','Não deve ser entregue')).rejects.toThrow('insufficient_quota');
+ await captionCall(id,'magic',paid,'fail');
+ expect((await db.query('select id from quota_transactions where metadata->>\'caption_operation_id\'=$1',[paid])).rows).toHaveLength(0);
+ expect((await db.query<{content_quota_balance:number}>('select content_quota_balance from profiles where id=$1',[A])).rows[0].content_quota_balance).toBe(0);
+ await expect(captionCall(id,'magic',randomUUID(),'begin')).rejects.toThrow('insufficient_quota');
+});
+it('draft saving restores text and channel without creating content or jobs',async()=>{
+ const id=await newImport();await db.query('select save_import_draft($1,$2,$3,$4)',[wa,A,id,{title:'Rascunho de teste',caption:'Minha legenda',channel:null,connection_id:null}]);
+ const row=(await db.query<{title:string;caption:string;channel:null;content_id:null;import_status:string}>('select title,caption,channel,content_id,import_status from import_overview where id=$1',[id])).rows[0];
+ expect(row).toEqual({title:'Rascunho de teste',caption:'Minha legenda',channel:null,content_id:null,import_status:'Rascunho'});
+ await db.query('select save_import_draft($1,$2,$3,$4)',[wa,A,id,{caption_only:true,caption:'Somente legenda'}]);
+ expect((await db.query('select title,caption,channel from content_imports where id=$1',[id])).rows[0]).toEqual({title:'Rascunho de teste',caption:'Somente legenda',channel:null});
+ await expect(db.query('select save_import_draft($1,$2,$3,$4)',[wa,V,id,{title:'',caption:''}])).rejects.toThrow('forbidden');
+});
+it('caption saves preserve approved status and schedule, with optimistic concurrency',async()=>{
+ const id=await newImport();const c=(await db.query<{id:string}>('select finalize_content_import($1,$2,$3,\'instagram\',\'Antes\') as id',[wa,id,A])).rows[0].id;
+ await db.query("update content_items set status='SCHEDULED',scheduled_at=now()+interval '1 day' where id=$1",[c]);
+ const before=(await db.query<{version:number;scheduled_at:string}>('select version,scheduled_at from content_items where id=$1',[c])).rows[0];
+ const v=(await db.query<{id:string}>('select id from content_variants where content_id=$1',[c])).rows[0].id;
+ await db.query('select save_caption($1,$2,$3,$4,$5)',[wa,A,v,'Depois',before.version]);
+ expect((await db.query('select status,scheduled_at from content_items where id=$1',[c])).rows[0]).toEqual({status:'SCHEDULED',scheduled_at:before.scheduled_at});
+ await expect(db.query('select save_caption($1,$2,$3,$4,$5)',[wa,A,v,'Sobrescrever',before.version])).rejects.toThrow('conflict');
+});
+it('deletion cancels pending jobs, removes the import from queries, preserves other imports and files',async()=>{
+ const id=await newImport(),other=await newImport();const c=(await db.query<{id:string}>('select finalize_content_import($1,$2,$3,\'instagram\',\'Antes\') as id',[wa,id,A])).rows[0].id;
+ await db.query("update content_items set status='SCHEDULED',scheduled_at=now()+interval '1 day' where id=$1",[c]);
+ const job=randomUUID();await db.query("insert into background_jobs(id,workspace_id,type,payload,idempotency_key) values($1,$2,'publishing',$3,$4)",[job,wa,{content_id:c},job]);
+ expect((await db.query<{import_status:string}>('select import_status from import_overview where id=$1',[id])).rows[0].import_status).toBe('Agendado');
+ await db.query('select delete_import($1,$2,$3)',[wa,A,id]);
+ expect((await db.query('select id from import_overview where id=$1',[id])).rows).toHaveLength(0);
+ expect((await db.query('select id from import_overview where id=$1',[other])).rows).toHaveLength(1);
+ expect((await db.query('select status,last_error from background_jobs where id=$1',[job])).rows[0]).toEqual({status:'FAILED',last_error:'import_deleted'});
+ expect((await db.query('select id from content_media where variant_id in (select id from content_variants where content_id=$1)',[c])).rows).toHaveLength(1);
+});
+it('requires real publication evidence and keeps external publication records on deletion',async()=>{
+ const id=await newImport();const c=(await db.query<{id:string}>('select finalize_content_import($1,$2,$3,\'instagram\',\'Antes\') as id',[wa,id,A])).rows[0].id;
+ const v=(await db.query<{id:string}>('select id from content_variants where content_id=$1',[c])).rows[0].id;
+ await db.query("insert into content_publications(workspace_id,variant_id,external_id,published_at,status,idempotency_key) values($1,$2,'real-post',now(),'PUBLISHED',$3)",[wa,v,randomUUID()]);
+ expect((await db.query<{import_status:string}>('select import_status from import_overview where id=$1',[id])).rows[0].import_status).toBe('Publicado');
+ await db.query('select delete_import($1,$2,$3)',[wa,A,id]);
+ expect((await db.query('select external_id from content_publications where variant_id=$1',[v])).rows).toEqual([{external_id:'real-post'}]);
 });
 it('support isolates private tickets, messages, events and notifications across users and tenants', async () => {
   const result = await asUser(
@@ -389,4 +489,3 @@ it('supports protected identities and exact assets with single master reference 
   expect(logoRow.rows[0].asset_subtype).toBe('logo');
   expect(logoRow.rows[0].placement).toBe('top_left');
 });
-

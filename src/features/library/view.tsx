@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { pageBlock } from './pagination';
 import { File, Upload, HardDrive, Shield, Lock, X } from 'lucide-react';
 import { Card, Button, Field, Empty, Modal, Notice, useT, useAction, api } from '@/components/ui';
 import type { Asset } from '@/lib/domain';
@@ -39,6 +40,7 @@ export function Library({
   const t = useT(),
     action = useAction(),
     router = useRouter(),
+    searchParams = useSearchParams(),
     [edit, setEdit] = useState<Asset | null>(null),
     [remove, setRemove] = useState<Asset | null>(null),
     [selectedFilesCount, setSelectedFilesCount] = useState(0),
@@ -744,15 +746,18 @@ export function Library({
           <Button
             secondary
             disabled={page <= 1}
-            onClick={() => router.push(`/library?page=${page - 1}`)}
+            onClick={() => router.push(`/library?${new URLSearchParams({...Object.fromEntries(searchParams),page:String(page-1)})}`)}
           >
             {t('previous')}
           </Button>
-          <span>{page}</span>
+          {pageBlock(page, total).map(number => (
+            <Button key={number} secondary={number !== page} aria-current={number === page ? 'page' : undefined}
+              aria-label={`Página ${number}`} onClick={() => router.push(`/library?${new URLSearchParams({...Object.fromEntries(searchParams),page:String(number)})}`)}>{number}</Button>
+          ))}
           <Button
             secondary
             disabled={page * 24 >= total}
-            onClick={() => router.push(`/library?page=${page + 1}`)}
+            onClick={() => router.push(`/library?${new URLSearchParams({...Object.fromEntries(searchParams),page:String(page+1)})}`)}
           >
             {t('following')}
           </Button>

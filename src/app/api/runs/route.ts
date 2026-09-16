@@ -127,12 +127,13 @@ export async function POST(request: Request) {
       const existing = checked(
         await ctx.db
           .from('content_items')
-          .select('id, status, agent_id')
+          .select('id, status, agent_id, strategy')
           .eq('id', input.content_id)
           .eq('workspace_id', ctx.workspaceId)
           .maybeSingle(),
       );
       if (!existing) throw new AppError('forbidden', 403);
+      if (existing.strategy?.source === 'import') throw new AppError('Conteúdos importados não utilizam geração de imagem.',409);
     }
 
     const agent = checked(

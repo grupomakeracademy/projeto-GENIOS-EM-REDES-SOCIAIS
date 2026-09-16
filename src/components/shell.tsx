@@ -5,6 +5,7 @@ import { useState } from 'react';
 import {
   LayoutDashboard,
   SquareCheck,
+  Upload,
   CalendarDays,
   Bot,
   Share2,
@@ -24,6 +25,7 @@ import { QuotaBadge } from './quota-badge';
 const navigation = [
   ['dashboard', LayoutDashboard],
   ['contents', SquareCheck],
+  ['import', Upload],
   ['calendar', CalendarDays],
   ['agents', Bot],
   ['channels', Share2],

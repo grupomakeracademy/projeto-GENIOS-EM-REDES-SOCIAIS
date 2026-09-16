@@ -74,6 +74,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (!item) throw new AppError('forbidden', 403);
     if (item.version !== version) throw new AppError('conflict', 409);
     if (action.startsWith('regenerate_')) {
+      if (item.strategy?.source === 'import') throw new AppError('A imagem importada é preservada sem regeneração.',409);
       if (!['ROUTINE', 'AWAITING_REVIEW', 'REJECTED', 'FAILED'].includes(item.status))
         throw new AppError('conflict', 409);
       const payload = z

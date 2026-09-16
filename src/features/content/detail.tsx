@@ -1,5 +1,6 @@
 'use client';
 import './content.css';
+import {CaptionEditor} from '@/features/captions/editor';
 import { useState } from 'react';
 import Link from 'next/link';
 import {
@@ -344,56 +345,10 @@ export function ContentDetail({
                 </div>
               ) : (
                 <>
-                  <Field label={t('caption')}>
-                    <textarea
-                      value={caption}
-                      maxLength={channels[variant.channel].limit}
-                      rows={12}
-                      disabled={
-                        !canEdit ||
-                        ['GENERATING', 'PUBLISHING', 'PUBLISHED', 'ARCHIVED'].includes(item.status)
-                      }
-                      onChange={(e) => setCaption(e.target.value)}
-                    />
-                    <small>
-                      {caption.length} / {channels[variant.channel].limit}
-                    </small>
-                  </Field>
-                  <div className="form-row">
-                    <Button
-                      secondary
-                      onClick={() =>
-                        action.act(async () => {
-                          await navigator.clipboard.writeText(caption);
-                        }, 'copied')
-                      }
-                    >
-                      {t('copy')}
-                    </Button>
-                    {canEdit ? (
-                      <Button
-                        busy={action.busy}
-                        disabled={caption === variant.caption}
-                        onClick={() => operation('edit', { variant_id: variant.id, caption })}
-                      >
-                        {t('save')}
-                      </Button>
-                    ) : null}
-                  </div>
-                  {canEdit && ['ROUTINE', 'AWAITING_REVIEW', 'REJECTED', 'FAILED'].includes(item.status) ? (
-                    <Button
-                      secondary
-                      busy={action.busy}
-                      onClick={() =>
-                        operation('regenerate_copy', {
-                          variant_id: variant.id,
-                          idempotency_key: crypto.randomUUID(),
-                        })
-                      }
-                    >
-                      {t('regenerateCopy')}
-                    </Button>
-                  ) : null}
+                  <CaptionEditor key={variant.id} scope="content" id={item.id} variantId={variant.id}
+                    value={caption} onChange={setCaption} limit={channels[variant.channel].limit}
+                    disabled={!canEdit || ['GENERATING','PUBLISHING','PUBLISHED','ARCHIVED'].includes(item.status)}
+                    onSave={async()=>{await api('captions','PATCH',{variant_id:variant.id,caption,version:item.version});const latest=await api('content/'+item.id);setItem(latest);router.refresh();}}/>
                 </>
               )
             ) : (
@@ -763,7 +718,7 @@ export function ContentDetail({
                     <span>Baixar</span>
                   </a>
                 ) : null}
-                {canEdit && ['ROUTINE', 'AWAITING_REVIEW', 'REJECTED', 'FAILED'].includes(item.status) ? (
+                {canEdit && item.strategy?.source !== 'import' && ['ROUTINE', 'AWAITING_REVIEW', 'REJECTED', 'FAILED'].includes(item.status) ? (
                   <Button
                     secondary
                     busy={regenerating}
