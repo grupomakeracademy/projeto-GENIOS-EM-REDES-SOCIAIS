@@ -1,4 +1,4 @@
-import { guard, checked, fail } from '@/lib/security/context';
+import { guard, checked, fail, AppError } from '@/lib/security/context';
 import { uploadImport, signedImport } from '@/features/imports/service';
 import { z } from 'zod';
 export async function GET(request: Request) {
@@ -48,8 +48,15 @@ export async function POST(request: Request) {
     const ctx = await guard(request, 'write', 64 * 1024 * 1024),
       form = await request.formData();
     const files = form.getAll('file');
-    if (files.some((file) => !(file instanceof File))) throw new Error('invalid_input');
-    const row = await uploadImport(ctx, z.uuid().parse(form.get('agent_id')), files as File[]);
+    if (!files.length || files.some((file) => !(file instanceof File))) {
+      throw new AppError('invalid_input', 400);
+    }
+    const agentIdRaw = form.get('agent_id');
+    const parsedAgent = z.uuid().safeParse(agentIdRaw);
+    if (!parsedAgent.success) {
+      throw new AppError('invalid_input', 400);
+    }
+    const row = await uploadImport(ctx, parsedAgent.data, files as File[]);
     return Response.json(row, { status: 201 });
   } catch (e) {
     return fail(e);

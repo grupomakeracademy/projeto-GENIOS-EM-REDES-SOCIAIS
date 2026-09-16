@@ -184,15 +184,6 @@ export function ContentDetail({
           let maxAttempts = 35;
           while (maxAttempts > 0) {
             await new Promise((resolve) => setTimeout(resolve, 2000));
-            try {
-              await fetch('/api/jobs/tick', {
-                method: 'POST',
-                headers: {
-                  Authorization: `Bearer ${process.env.NEXT_PUBLIC_WORKER_SECRET || 'dev'}`,
-                },
-              });
-            } catch {}
-
             const latest = await api(`content/${item.id}`);
             const updatedPositionMedias = (
               latest.content_variants[index]?.content_media || []

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { AIConfig, ProviderId } from '@/lib/domain';
 import { NO_LOGO_INSTRUCTION } from './image-logo-policy';
 import { ProviderError, providerHttpError } from './provider-error';
+import { auditAICall, type AICallContext } from './audit';
 export type Usage = {
   input_tokens: number | null;
   output_tokens: number | null;
@@ -16,7 +17,10 @@ export async function apiJSON(
   body: unknown,
   provider: ProviderId,
   method = 'POST',
+  audit?: Partial<AICallContext>,
 ) {
+  const model = body instanceof FormData ? String(body.get('model') || '') : String((body as {model?:string}|undefined)?.model || new URL(url).pathname.split('/models/')[1]?.split(':')[0] || 'registry');
+  await auditAICall(provider,url,model,method === 'GET' ? 'model_validation' : new URL(url).pathname, audit);
   let response: Response;
   try {
     response = await fetch(url, {
@@ -334,5 +338,6 @@ export async function validateCredential(provider: ProviderId, key: string) {
     undefined,
     provider,
     'GET',
+    {trigger:'user_action',source:'src/lib/ai/providers.ts:validateCredential',reason:'credential_validation'},
   );
 }

@@ -8,6 +8,7 @@ import { openAIDefaults } from './defaults';
 import { usableOverride, type AgentAIRecord } from './agent-config';
 import { validateAgentModel } from './validate-model';
 import { AppError } from '@/lib/security/context';
+import { withAICallContext, type AICallContext } from './audit';
 export async function credential(workspaceId: string, provider: ProviderId) {
   void workspaceId; // Credentials are exclusively server-wide environment values.
   const server = serverCredential(provider);
@@ -20,6 +21,7 @@ export class AIService {
     private workspaceId: string,
     private jobId?: string,
     private agentId?: string,
+    private audit: Partial<AICallContext> = {},
   ) {}
   private async override(purpose: AIConfig['purpose']) {
     if (!this.agentId) return null;
@@ -76,19 +78,20 @@ export class AIService {
   }
   async text<T>(purpose: 'text' | 'orchestrator', schema: z.ZodType<T>, context: unknown) {
     const config = await this.config(purpose);
-    const result = await new StructuredTextProvider().generate(
+    const result = await withAICallContext(this.audit,async()=>new StructuredTextProvider().generate(
       config,
       await this.key(config),
       schema,
       context,
-    );
+    ));
     await this.usage(config, purpose, result.usage);
     return result.data;
   }
   async vector(text: string) {
     const config = await this.config('embedding');
     const start = Date.now();
-    const result = await embedding(config, await this.key(config), text);
+    const key = await this.key(config);
+    const result = await withAICallContext(this.audit,()=>embedding(config, key, text));
     await this.usage(config, 'embedding', { latency_ms: Date.now() - start });
     return result;
   }
@@ -100,7 +103,8 @@ export class AIService {
   ) {
     const config = await this.config('image'),
       start = Date.now();
-    const result = await generateImage(config, await this.key(config), prompt, ratio, references, quality);
+    const key = await this.key(config);
+    const result = await withAICallContext(this.audit,()=>generateImage(config, key, prompt, ratio, references, quality));
     await this.usage(config, 'image', { latency_ms: Date.now() - start, images: 1 });
     return { ...result, provider: config.provider, model: config.model };
   }

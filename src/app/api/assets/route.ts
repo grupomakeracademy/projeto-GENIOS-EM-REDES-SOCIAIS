@@ -174,7 +174,10 @@ export async function PATCH(request: Request) {
         .from('assets')
         .select('category')
         .eq('id', input.id)
+        .eq('workspace_id', ctx.workspaceId)
         .maybeSingle();
+
+      if (!assetItem) throw new AppError('forbidden', 403);
 
       // Never invoke vision/AI for protected identity or exact asset (0 API cost)
       if (assetItem && (assetItem.category === 'protected_identity' || assetItem.category === 'exact_asset')) {

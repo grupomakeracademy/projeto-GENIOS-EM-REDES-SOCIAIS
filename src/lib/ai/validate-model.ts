@@ -1,6 +1,7 @@
 import 'server-only';
 import type { AIConfig } from '@/lib/domain';
 import { AppError } from '@/lib/security/context';
+import { auditAICall } from './audit';
 
 // Read-only provider probe: no prompts, generated assets or secret-bearing logs.
 export async function validateAgentModel(config: AIConfig, key: string) {
@@ -12,6 +13,7 @@ export async function validateAgentModel(config: AIConfig, key: string) {
         ? 'https://api.anthropic.com/v1/models/'
         : 'https://generativelanguage.googleapis.com/v1beta/models/';
   let response: Response;
+  await auditAICall(config.provider,base+model,config.model,'model_validation',{trigger:'system_internal',source:'src/lib/ai/validate-model.ts:validateAgentModel',reason:'model_configuration_validation'});
   try {
     response = await fetch(base + model, {
       headers:

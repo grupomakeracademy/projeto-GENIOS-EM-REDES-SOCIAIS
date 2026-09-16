@@ -1,4 +1,4 @@
-import { beforeEach, afterEach, it, expect, vi } from 'vitest';
+import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import sharp from 'sharp';
 vi.mock('server-only', () => ({}));
 const state = vi.hoisted(() => ({
@@ -194,4 +194,132 @@ it('rejects zero/seven files and validates the entire batch before storing anyth
     ]),
   ).rejects.toThrow();
   expect(state.stored).toBeNull();
+});
+
+describe('Mandatory Audit Scenarios (1 to 6 images, limits, formats)', () => {
+  // Scenarios 1 to 6: 1, 2, 3, 4, 5, 6 valid images
+  it.each([1, 2, 3, 4, 5, 6])('successfully uploads and orders %i valid images', async (count) => {
+    const files = await Promise.all(
+      Array.from({ length: count }, async (_, index) => {
+        const format = index % 3 === 0 ? 'jpeg' : index % 3 === 1 ? 'png' : 'webp';
+        const mime = format === 'jpeg' ? 'image/jpeg' : format === 'png' ? 'image/png' : 'image/webp';
+        const instance = sharp({
+          create: { width: 400 + index * 20, height: 300 + index * 10, channels: 3, background: 'red' },
+        });
+        const buffer = format === 'jpeg' ? await instance.jpeg().toBuffer() : format === 'png' ? await instance.png().toBuffer() : await instance.webp().toBuffer();
+        return new File([new Uint8Array(buffer)], `test-${index + 1}.${format === 'jpeg' ? 'jpg' : format}`, { type: mime });
+      }),
+    );
+
+    const result = await uploadImport(ctx, 'agent', files);
+    const images = importImages(result);
+
+    expect(images).toHaveLength(count);
+    // Verify strict order preservation
+    for (let i = 0; i < count; i++) {
+      expect(images[i].width).toBe(400 + i * 20);
+      expect(images[i].height).toBe(300 + i * 10);
+      if (i === 0) {
+        expect(images[0].storage_path).toBe(result.storage_path);
+        expect(images[0].storage_path).toContain('/original.');
+      } else {
+        expect(images[i].storage_path).toContain(`/slide-${i + 1}.`);
+      }
+    }
+  });
+
+  // Scenario 7: More than 6 images
+  it('rejects attempt with more than 6 images (> 6)', async () => {
+    const bytes = await sharp({ create: { width: 50, height: 50, channels: 3, background: 'blue' } })
+      .png()
+      .toBuffer();
+    const files = Array.from(
+      { length: 7 },
+      (_, i) => new File([new Uint8Array(bytes)], `slide-${i}.png`, { type: 'image/png' }),
+    );
+    await expect(uploadImport(ctx, 'agent', files)).rejects.toThrow('1 a 6');
+  });
+
+  // Scenario 8: File larger than 10 MB
+  it('rejects file larger than 10 MB with file_too_large (413)', async () => {
+    // Create a mock File with size 10MB + 1
+    const oversizedFile = new File(['x'], 'big.jpg', { type: 'image/jpeg' });
+    Object.defineProperty(oversizedFile, 'size', { value: 10 * 1024 * 1024 + 1 });
+
+    await expect(uploadImport(ctx, 'agent', [oversizedFile])).rejects.toMatchObject({
+      code: 'file_too_large',
+      status: 413,
+    });
+  });
+
+  // Scenario 9: Invalid format (e.g. PDF, TXT, SVG or corrupt)
+  it('rejects invalid format (non-allowed MIME type or bad signature)', async () => {
+    const textFile = new File(['hello text'], 'test.txt', { type: 'text/plain' });
+    await expect(uploadImport(ctx, 'agent', [textFile])).rejects.toMatchObject({
+      code: 'invalid_input',
+    });
+
+    const fakeJpg = new File([new Uint8Array([0, 1, 2, 3, 4])], 'fake.jpg', { type: 'image/jpeg' });
+    await expect(uploadImport(ctx, 'agent', [fakeJpg])).rejects.toMatchObject({
+      code: 'invalid_input',
+    });
+  });
+
+  // Scenario 10: Combination of valid and invalid files
+  it('rejects combination of valid and invalid files atomically without storing anything', async () => {
+    state.stored = null;
+    const validBytes = await sharp({ create: { width: 100, height: 100, channels: 3, background: 'green' } })
+      .png()
+      .toBuffer();
+    const validFile = new File([new Uint8Array(validBytes)], 'valid.png', { type: 'image/png' });
+    const invalidFile = new File(['not an image'], 'corrupt.jpg', { type: 'image/jpeg' });
+
+    await expect(uploadImport(ctx, 'agent', [validFile, invalidFile])).rejects.toMatchObject({
+      code: 'invalid_input',
+    });
+    expect(state.stored).toBeNull();
+  });
+
+  // Special test: WebP with binary byte >= 128 in length field (the bug we resolved)
+  it('successfully validates WebP images with high-bit bytes in file size', async () => {
+    // WebP image
+    const webpBuffer = await sharp({ create: { width: 350, height: 350, channels: 3, background: 'yellow' } })
+      .webp()
+      .toBuffer();
+    const file = new File([new Uint8Array(webpBuffer)], 'test.webp', { type: 'image/webp' });
+
+    const result = await uploadImport(ctx, 'agent', [file]);
+    expect(result.mime_type).toBe('image/webp');
+    expect(result.width).toBe(350);
+  });
+
+  // Special test: Normalizes image/jpg and image/pjpeg MIME variants
+  it('accepts image/jpg and image/pjpeg Windows MIME variants and normalizes to image/jpeg', async () => {
+    const jpgBytes = await sharp({ create: { width: 200, height: 200, channels: 3, background: 'cyan' } })
+      .jpeg()
+      .toBuffer();
+    const file = new File([new Uint8Array(jpgBytes)], 'photo.jpg', { type: 'image/jpg' });
+
+    const result = await uploadImport(ctx, 'agent', [file]);
+    expect(result.mime_type).toBe('image/jpeg');
+    expect(result.storage_path).toMatch(/\.jpg$/);
+  });
+
+  it('uses the real image format when the filename and declared MIME are incorrect', async () => {
+    const jpegBytes = await sharp({
+      create: { width: 320, height: 480, channels: 3, background: 'magenta' },
+    })
+      .jpeg()
+      .toBuffer();
+    const mislabeledFile = new File([new Uint8Array(jpegBytes)], 'photo.png', {
+      type: 'image/png',
+    });
+
+    const result = await uploadImport(ctx, 'agent', [mislabeledFile]);
+
+    expect(result.mime_type).toBe('image/jpeg');
+    expect(result.storage_path).toMatch(/\.jpg$/);
+    expect(result.width).toBe(320);
+    expect(result.height).toBe(480);
+  });
 });

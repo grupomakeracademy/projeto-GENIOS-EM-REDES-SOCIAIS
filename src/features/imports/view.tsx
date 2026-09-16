@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { Upload } from 'lucide-react';
 import { Card, Button, Field, Notice, api } from '@/components/ui';
 import { ImportPreview, type ImportPreviewRecord } from './preview';
-import { MAX_IMPORT_IMAGES } from './images';
+import { MAX_IMPORT_IMAGES, MAX_IMPORT_IMAGE_BYTES } from './images';
 import { channels, type Channel } from '@/lib/domain';
 import type { Capabilities } from '@/lib/social/connectors';
 import styles from './view.module.css';
@@ -113,6 +113,7 @@ export function ImportView({
     try {
       await work();
     } catch (e) {
+      console.error('[Import Flow Error]', e);
       setError(true);
       setMessage(e instanceof Error ? e.message : 'internal_error');
     } finally {
@@ -200,10 +201,46 @@ export function ImportView({
                     void perform(async () => {
                       if (files.length > MAX_IMPORT_IMAGES)
                         throw new Error('Selecione de 1 a 6 imagens por postagem.');
+
+                      console.log('[Import Frontend] Selected files:', {
+                        count: files.length,
+                        files: files.map((f, i) => ({
+                          index: i,
+                          name: f.name,
+                          size: f.size,
+                          type: f.type,
+                        })),
+                        agent,
+                      });
+
+                      const allowedExts = ['.jpg', '.jpeg', '.png', '.webp'];
+                      const allowedMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg', 'image/pjpeg'];
+
+                      for (const file of files) {
+                        const ext = file.name.includes('.')
+                          ? '.' + file.name.split('.').pop()!.toLowerCase()
+                          : '';
+                        const mime = (file.type || '').toLowerCase();
+                        const isExtAllowed = allowedExts.includes(ext);
+                        const isMimeAllowed = !mime || allowedMimes.includes(mime);
+
+                        if (!isExtAllowed && !isMimeAllowed) {
+                          throw new Error(`Formato não suportado no arquivo "${file.name}". Use JPG, PNG ou WebP.`);
+                        }
+
+                        if (file.size > MAX_IMPORT_IMAGE_BYTES) {
+                          throw new Error(`O arquivo "${file.name}" ultrapassa o limite de 10 MB.`);
+                        }
+                      }
+
                       const form = new FormData();
                       files.forEach((file) => form.append('file', file));
                       form.set('agent_id', agent);
+
+                      console.log('[Import Frontend] Submitting FormData to /api/imports...');
                       const row = await api('imports', 'POST', form);
+                      console.log('[Import Frontend] Upload successful. Row:', row);
+
                       await load(row.id);
                       await refreshRecent();
                     });

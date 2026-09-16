@@ -436,6 +436,26 @@ const messages = {
     'Check the entered fields.',
     'Revisa los campos.',
   ],
+  invalid_import_images: [
+    'As imagens selecionadas são inválidas. Envie arquivos JPG, PNG ou WebP.',
+    'Selected images are invalid. Upload JPG, PNG or WebP files.',
+    'Las imágenes seleccionadas no son válidas. Sube archivos JPG, PNG o WebP.',
+  ],
+  invalid_import_image_count: [
+    'Selecione de 1 a 6 imagens por postagem.',
+    'Select 1 to 6 images per post.',
+    'Selecciona de 1 a 6 imágenes por publicación.',
+  ],
+  invalid_import_image: [
+    'Uma das imagens selecionadas não atende aos requisitos.',
+    'One of the selected images does not meet the requirements.',
+    'Una de las imágenes seleccionadas no cumple los requisitos.',
+  ],
+  import_cover_mismatch: [
+    'Inconsistência na imagem de capa. Tente selecionar os arquivos novamente.',
+    'Cover image mismatch. Try selecting the files again.',
+    'Inconsistencia en la imagen de portada. Intenta seleccionar los arquivos de nuevo.',
+  ],
   password_mismatch: [
     'As senhas não coincidem.',
     'Passwords do not match.',

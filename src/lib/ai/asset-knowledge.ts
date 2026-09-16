@@ -262,7 +262,7 @@ export async function processAssetKnowledge(
             },
           },
         },
-        'openai',
+        'openai', 'POST', {trigger:'user_action',source:'src/lib/ai/asset-knowledge.ts:processAssetKnowledge',reason:'reference_analysis'},
       );
 
       const parsedResponse = z
@@ -310,7 +310,7 @@ export async function processAssetKnowledge(
             },
           },
         },
-        'openai',
+        'openai', 'POST', {trigger:'user_action',source:'src/lib/ai/asset-knowledge.ts:processAssetKnowledge',reason:'document_analysis'},
       );
 
       const parsedResponse = z

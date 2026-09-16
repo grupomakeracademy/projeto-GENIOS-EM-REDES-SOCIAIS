@@ -68,6 +68,9 @@ export async function guard(request: Request, action: 'read' | 'write' | 'admin'
   return ctx;
 }
 export function fail(error: unknown) {
+  if (process.env.NODE_ENV !== 'production' || process.env.DEBUG) {
+    console.error('[API Failure]', error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : error);
+  }
   if (error instanceof AppError)
     return Response.json({ error: error.code }, { status: error.status });
   if (error instanceof Error && error.name === 'ZodError')
@@ -87,10 +90,17 @@ export function fail(error: unknown) {
     'invalid_schedule',
     'invalid_timezone',
     'repetitive_topic',
+    'file_too_large',
+    'invalid_input',
+    'invalid_import_images',
+    'invalid_import_image_count',
+    'invalid_import_image',
+    'import_cover_mismatch',
   ];
   const code =
     error instanceof Error && safe.includes(error.message) ? error.message : 'internal_error';
-  return Response.json({ error: code }, { status: code === 'setup_required' ? 503 : 400 });
+  const status = code === 'setup_required' ? 503 : code === 'file_too_large' ? 413 : 400;
+  return Response.json({ error: code }, { status });
 }
 export function checked<T>(result: { data: T; error: unknown }): T {
   if (result.error) throw new AppError('database_error', 503);

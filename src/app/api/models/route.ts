@@ -55,6 +55,7 @@ export async function POST(request: Request) {
       undefined,
       input.provider,
       'GET',
+      {trigger:'user_action',source:'src/app/api/models/route.ts:POST',reason:'model_registration'},
     );
     const existing = checked(
       await ctx.db

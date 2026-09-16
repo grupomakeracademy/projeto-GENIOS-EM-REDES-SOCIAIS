@@ -127,7 +127,7 @@ export async function improveCaption(ctx: Context, input: z.infer<typeof caption
         ),
     });
     const result = schema.parse(
-      await new AIService(ctx.workspaceId, undefined, agent).text('text', schema, {
+      await new AIService(ctx.workspaceId, undefined, agent, {trigger:'user_action',source:'src/features/captions/service.ts',reason:input.kind,agentId:agent}).text('text', schema, {
         task:
           task +
           ' Use exclusivamente estes dados textuais. Não invente fatos, depoimentos, números, clientes, benefícios, promessas ou acontecimentos. Preserve o idioma. Não há imagem disponível; não analise imagens. Retorne caption.',

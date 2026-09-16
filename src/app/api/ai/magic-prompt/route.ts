@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { guard, fail, AppError } from '@/lib/security/context';
+import { guard, fail } from '@/lib/security/context';
 import { AIService } from '@/lib/ai/service';
 import { requireAgent } from '@/lib/security/agent';
 
@@ -18,7 +18,7 @@ export async function POST(request: Request) {
       await requireAgent(ctx, input.agent_id);
     }
 
-    const ai = new AIService(ctx.workspaceId, undefined, input.agent_id);
+    const ai = new AIService(ctx.workspaceId, undefined, input.agent_id, {trigger:'user_action',source:'src/app/api/ai/magic-prompt/route.ts:POST',reason:`magic_${input.type}`,agentId:input.agent_id});
 
     if (input.type === 'instruction') {
       const response = await ai.text(

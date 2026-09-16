@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { serverCredential } from '@/lib/ai/credentials';
 import { apiJSON, systemPolicy } from '@/lib/ai/providers';
+import { auditAICall } from '@/lib/ai/audit';
 export const sourceSchema = z.object({
   title: z.string(),
   url: z.url(),
@@ -80,6 +81,7 @@ export async function research(query: string): Promise<Source[]> {
 export class TavilyResearchProvider implements ResearchProvider {
   async search(query: string) {
     if (!process.env.TAVILY_API_KEY) throw new Error('provider_missing');
+    await auditAICall('tavily','https://api.tavily.com/search','basic','research',{source:'src/lib/research/provider.ts:TavilyResearchProvider.search',reason:'content_research'});
     const response = await fetch('https://api.tavily.com/search', {
       method: 'POST',
       headers: {

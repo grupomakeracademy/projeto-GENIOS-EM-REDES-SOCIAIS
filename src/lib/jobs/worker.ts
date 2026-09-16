@@ -4,6 +4,8 @@ import { checked } from '@/lib/security/context';
 import { backoff, nextOccurrence } from './scheduling';
 import { jobSchema, runPipeline, regenerate, renewLease } from './pipeline';
 import { ProviderError } from '@/lib/ai/provider-error';
+import { withAICallContext } from '@/lib/ai/audit';
+import { assertJobEligible } from './eligibility';
 export async function tick() {
   const db = adminClient(),
     now = new Date();
@@ -23,7 +25,7 @@ export async function tick() {
         {
           workspace_id: schedule.workspace_id,
           type: 'agent_run',
-          payload: { agent_id: schedule.agent_id, origin: 'routine' },
+          payload: { agent_id: schedule.agent_id, origin: 'routine', schedule_id: schedule.id, scheduled_for: schedule.next_run_at, schedule_fingerprint: JSON.stringify([schedule.local_time,schedule.weekdays,schedule.timezone]) },
           idempotency_key: key,
         },
         { onConflict: 'idempotency_key', ignoreDuplicates: true },
@@ -42,10 +44,18 @@ export async function tick() {
   if (!claimed?.length) return { processed: false };
   const job = jobSchema.parse(claimed[0]);
   try {
+    await assertJobEligible(job);
+    await withAICallContext({
+      trigger:job.attempts>1?'retry':job.payload.origin==='routine'?'scheduled_routine':'user_action',
+      source:'src/lib/jobs/pipeline.ts',reason:job.type,jobId:job.id,
+      contentId:String(job.payload.content_id || job.id),agentId:String(job.payload.agent_id || ''),
+      beforeCall:()=>assertJobEligible(job),
+    },async()=>{
     if (job.type === 'agent_run') await runPipeline(job);
     else if (job.type === 'regenerate_copy' || job.type === 'regenerate_image')
       await regenerate(job);
     else throw new Error('unsupported_capability');
+    });
     await renewLease(job);
     checked(
       await db
@@ -85,6 +95,7 @@ export async function tick() {
       'invalid_input',
       'lease_lost',
       'insufficient_quota',
+      'job_not_eligible',
     ];
     const code =
       error instanceof Error && safe.includes(error.message) ? error.message : 'internal_error';

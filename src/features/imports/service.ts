@@ -7,6 +7,42 @@ import { channels, type Channel } from '@/lib/domain';
 import { connectors } from '@/lib/social/connectors';
 import { importImages, MAX_IMPORT_IMAGES, MAX_IMPORT_IMAGE_BYTES } from './images';
 type Context = Awaited<ReturnType<typeof context>>;
+
+function detectImportImageMime(bytes: Uint8Array) {
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  )
+    return 'image/png' as const;
+  if (
+    bytes.length >= 3 &&
+    bytes[0] === 0xff &&
+    bytes[1] === 0xd8 &&
+    bytes[2] === 0xff
+  )
+    return 'image/jpeg' as const;
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  )
+    return 'image/webp' as const;
+  throw new AppError('invalid_input');
+}
+
 export async function importRecord(ctx: Context, id: string) {
   const row = checked(
     await ctx.db
@@ -34,6 +70,21 @@ export async function uploadImport(ctx: Context, agentId: string, input: File | 
   const files = Array.isArray(input) ? input : [input];
   if (!files.length || files.length > MAX_IMPORT_IMAGES)
     throw new AppError('Selecione de 1 a 6 imagens por postagem.');
+
+  if (process.env.NODE_ENV !== 'production' || process.env.DEBUG) {
+    console.log('[Import Upload Diagnostics]', {
+      fileCount: files.length,
+      files: files.map((f, idx) => ({
+        index: idx,
+        name: f.name,
+        type: f.type,
+        size: f.size,
+      })),
+      agentId,
+      workspaceId: ctx.workspaceId,
+    });
+  }
+
   const agent = checked(
     await ctx.db
       .from('agents')
@@ -45,20 +96,32 @@ export async function uploadImport(ctx: Context, agentId: string, input: File | 
   if (!agent) throw new AppError('forbidden', 403);
   // Validate every slide before creating files or the import record.
   const prepared = [];
-  for (const file of files) {
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type))
+  for (const [index, file] of files.entries()) {
+    const rawType = (file.type || '').toLowerCase();
+    const declaredMime =
+      rawType === 'image/jpg' || rawType === 'image/pjpeg' ? 'image/jpeg' : rawType;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(declaredMime))
       throw new AppError('invalid_input');
     if (file.size > MAX_IMPORT_IMAGE_BYTES) throw new AppError('file_too_large', 413);
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const ext = validateFile(bytes, file.type);
+    const mime = detectImportImageMime(bytes);
+    const ext = validateFile(bytes, mime);
     const metadata = await sharp(bytes, { limitInputPixels: 40000000 }).metadata();
     if (!metadata.width || !metadata.height || (metadata.pages || 1) > 1)
       throw new AppError('invalid_input');
+    if (declaredMime !== mime && (process.env.NODE_ENV !== 'production' || process.env.DEBUG)) {
+      console.info('[Import Upload Type Normalized]', {
+        index,
+        name: file.name,
+        declaredMime,
+        detectedMime: mime,
+      });
+    }
     const swapped = [5, 6, 7, 8].includes(metadata.orientation || 1);
     prepared.push({
       bytes,
       ext,
-      mime_type: file.type,
+      mime_type: mime,
       width: swapped ? metadata.height : metadata.width,
       height: swapped ? metadata.width : metadata.height,
     });
@@ -70,6 +133,19 @@ export async function uploadImport(ctx: Context, agentId: string, input: File | 
     width: image.width,
     height: image.height,
   }));
+
+  if (process.env.NODE_ENV !== 'production' || process.env.DEBUG) {
+    console.log('[Import Upload Validated]', {
+      importId: id,
+      slides: images.map((img, idx) => ({
+        position: idx + 1,
+        path: img.storage_path,
+        mime: img.mime_type,
+        dimensions: `${img.width}x${img.height}`,
+      })),
+    });
+  }
+
   const db = adminClient(),
     storage = db.storage.from('brand-assets');
   const attemptedPaths: string[] = [];
@@ -96,8 +172,24 @@ export async function uploadImport(ctx: Context, agentId: string, input: File | 
       .select('*')
       .single();
     if (row.error) throw new AppError('database_error', 503);
+
+    if (process.env.NODE_ENV !== 'production' || process.env.DEBUG) {
+      console.log('[Import Upload Saved]', {
+        importId: id,
+        totalImages: images.length,
+        firstImage: images[0].storage_path,
+      });
+    }
+
     return row.data;
   } catch (error) {
+    if (process.env.NODE_ENV !== 'production' || process.env.DEBUG) {
+      console.error('[Import Upload Failed]', {
+        importId: id,
+        error: error instanceof Error ? error.message : error,
+        attemptedPaths,
+      });
+    }
     const cleanup = await storage.remove(attemptedPaths);
     if (cleanup?.error) console.error('import_upload_cleanup_failed', { importId: id });
     throw error;

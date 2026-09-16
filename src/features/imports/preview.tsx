@@ -62,10 +62,10 @@ export function ImportPreview({
               <button
                 type="button"
                 key={index}
-                className={`${controls.pill} ${index <= position ? controls.active : ''}`}
+                className={`${controls.pill} ${index === position ? controls.active : ''}`}
                 aria-label={`Slide ${index + 1}`}
                 aria-current={index === position ? 'step' : undefined}
-                aria-pressed={index <= position}
+                aria-pressed={index === position}
                 onClick={() => setPosition(index)}
               >
                 {index + 1}
