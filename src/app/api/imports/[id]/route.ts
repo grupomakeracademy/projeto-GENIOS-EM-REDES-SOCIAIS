@@ -1,5 +1,6 @@
-import { guard, checked, required, fail } from '@/lib/security/context';
-import { importRecord, finalizeImport } from '@/features/imports/service';
+import { guard, checked, fail, AppError } from '@/lib/security/context';
+import { importRecord, finalizeImport, signedImport } from '@/features/imports/service';
+import { importImages } from '@/features/imports/images';
 import { adminClient } from '@/lib/supabase/server';
 import { channelSchema } from '@/lib/domain';
 import { z } from 'zod';
@@ -8,23 +9,29 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const ctx = await guard(request),
       { id } = await params;
     const row = await importRecord(ctx, z.uuid().parse(id));
-    if (new URL(request.url).searchParams.has('download')) {
-      const blob = checked(await ctx.db.storage.from('brand-assets').download(row.storage_path));
+    const search = new URL(request.url).searchParams;
+    if (search.has('download')) {
+      const images = importImages(row);
+      const position = z.coerce
+        .number()
+        .int()
+        .min(0)
+        .max(5)
+        .parse(search.get('slide') ?? 0);
+      const image = images[position];
+      if (!image) throw new AppError('invalid_input');
+      const blob = checked(await ctx.db.storage.from('brand-assets').download(image.storage_path));
       return new Response(blob, {
         headers: {
-          'Content-Type': row.mime_type,
-          'Content-Disposition': `attachment; filename="import-${id}.${row.storage_path.split('.').pop()}"`,
+          'Content-Type': image.mime_type,
+          'Content-Disposition': `attachment; filename="import-${id}${images.length > 1 ? `-slide-${position + 1}` : ''}.${image.storage_path.split('.').pop()}"`,
           'Cache-Control': 'private, no-store',
         },
       });
     }
-    const signed = required(
-      await ctx.db.storage.from('brand-assets').createSignedUrl(row.storage_path, 900),
-    );
-    return Response.json(
-      { ...row, url: signed.signedUrl },
-      { headers: { 'Cache-Control': 'private, no-store' } },
-    );
+    return Response.json(await signedImport(ctx, row), {
+      headers: { 'Cache-Control': 'private, no-store' },
+    });
   } catch (e) {
     return fail(e);
   }

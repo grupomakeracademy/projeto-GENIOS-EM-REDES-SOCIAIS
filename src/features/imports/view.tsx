@@ -2,14 +2,15 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { Upload, Download, ExternalLink } from 'lucide-react';
+import { Upload } from 'lucide-react';
 import { Card, Button, Field, Notice, api } from '@/components/ui';
-import { SocialLogo } from '@/components/social-logos';
+import { ImportPreview, type ImportPreviewRecord } from './preview';
+import { MAX_IMPORT_IMAGES } from './images';
 import { channels, type Channel } from '@/lib/domain';
 import type { Capabilities } from '@/lib/social/connectors';
 import styles from './view.module.css';
 import { CaptionEditor } from '@/features/captions/editor';
-type Draft = {
+type Draft = ImportPreviewRecord & {
   title: string;
   channel: Channel | null;
   connection_id: string | null;
@@ -42,11 +43,14 @@ export function ImportView({
   const [draft, setDraft] = useState<Draft | null>(null),
     [caption, setCaption] = useState(''),
     [channel, setChannel] = useState<Channel | ''>('');
-  const [accountData, setAccountData] = useState<{agent:string;items:Account[]}>({agent:'',items:[]}),
+  const [accountData, setAccountData] = useState<{ agent: string; items: Account[] }>({
+      agent: '',
+      items: [],
+    }),
     [account, setAccount] = useState(''),
     [busy, setBusy] = useState(false);
-  const loadingAccounts=!!agent&&accountData.agent!==agent;
-  const accounts=accountData.agent===agent?accountData.items:[];
+  const loadingAccounts = !!agent && accountData.agent !== agent;
+  const accounts = accountData.agent === agent ? accountData.items : [];
   const [message, setMessage] = useState(''),
     [error, setError] = useState(false),
     [date, setDate] = useState(''),
@@ -63,22 +67,30 @@ export function ImportView({
     if (id) void perform(() => load(id));
   }, [params]);
   useEffect(() => {
-    let live=true;
-    void api('imports?recent=1').then(data=>{if(live)setRecent(data.items);}).catch(()=>{if(live)setMessage('Não foi possível carregar as importações.');});
-    return ()=>{live=false;};
+    let live = true;
+    void api('imports?recent=1')
+      .then((data) => {
+        if (live) setRecent(data.items);
+      })
+      .catch(() => {
+        if (live) setMessage('Não foi possível carregar as importações.');
+      });
+    return () => {
+      live = false;
+    };
   }, []);
   useEffect(() => {
     let live = true;
     if (!agent) return;
     void api(`channels?agent=${encodeURIComponent(agent)}`)
       .then((data) => {
-        if (live) setAccountData({agent,items:data.items||[]});
+        if (live) setAccountData({ agent, items: data.items || [] });
       })
       .catch(() => {
         if (live) {
           setError(true);
           setMessage('Não foi possível consultar os canais.');
-          setAccountData({agent,items:[]});
+          setAccountData({ agent, items: [] });
         }
       });
     return () => {
@@ -174,19 +186,22 @@ export function ImportView({
             {!draft ? (
               <label className={styles.upload}>
                 <Upload size={28} />
-                <strong>Enviar imagem pronta</strong>
-                <span>JPG, PNG ou WebP · até 10 MB</span>
+                <strong>Enviar imagens prontas</strong>
+                <span>De 1 a 6 imagens · JPG, PNG ou WebP · até 10 MB por imagem</span>
                 <input
-                  aria-label="Enviar imagem pronta"
+                  aria-label="Enviar imagens prontas"
                   type="file"
+                  multiple
                   accept="image/jpeg,image/png,image/webp"
                   disabled={!editable || !agent}
                   onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
+                    const files = Array.from(e.target.files || []);
+                    if (!files.length) return;
                     void perform(async () => {
+                      if (files.length > MAX_IMPORT_IMAGES)
+                        throw new Error('Selecione de 1 a 6 imagens por postagem.');
                       const form = new FormData();
-                      form.set('file', file);
+                      files.forEach((file) => form.append('file', file));
                       form.set('agent_id', agent);
                       const row = await api('imports', 'POST', form);
                       await load(row.id);
@@ -198,7 +213,9 @@ export function ImportView({
               </label>
             ) : (
               <p>
-                Imagem original preservada · {draft.width} × {draft.height} px
+                {(draft.images?.length || 1) > 1
+                  ? `${draft.images!.length} imagens originais preservadas · ordem de seleção mantida`
+                  : `Imagem original preservada · ${draft.width} × ${draft.height} px`}
               </p>
             )}
             <Field label="Título">
@@ -361,48 +378,15 @@ export function ImportView({
             </Button>
           </Card>
         </div>
-        <Card className={styles.preview}>
-          <h2>Preview da postagem</h2>
-          <div className="preview-frame phone">
-            <header>
-              {activeChannel ? <SocialLogo channel={activeChannel} /> : null}
-              <strong>
-                {selected?.account_name ||
-                  agents.find((a) => a.id === agent)?.name ||
-                  'Sua publicação'}
-              </strong>
-            </header>
-            {draft ? (
-              <img
-                src={draft.url}
-                alt="Imagem original importada"
-                width={draft.width}
-                height={draft.height}
-                style={{ width: '100%', height: 'auto', objectFit: 'contain' }}
-              />
-            ) : (
-              <div className={styles.placeholder}>
-                <Upload />
-                <p>Envie uma imagem para visualizar</p>
-              </div>
-            )}
-            <p className={styles.caption}>{caption || 'Sua legenda aparecerá aqui.'}</p>
-          </div>
-          {draft ? (
-            <div className="form-row preview-action-buttons">
-              <a className="btn-preview-open" href={draft.url} target="_blank" rel="noreferrer">
-                <ExternalLink size={18} /> Abrir
-              </a>
-              <a
-                className="btn-preview-download"
-                href={`/api/imports/${draft.id}?download=1`}
-                download
-              >
-                <Download size={18} /> Baixar
-              </a>
-            </div>
-          ) : null}
-        </Card>
+        <ImportPreview
+          key={draft?.id || 'empty'}
+          item={draft}
+          title={
+            selected?.account_name || agents.find((a) => a.id === agent)?.name || 'Sua publicação'
+          }
+          caption={caption}
+          channel={activeChannel}
+        />
       </div>
     </>
   );

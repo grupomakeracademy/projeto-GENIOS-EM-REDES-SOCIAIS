@@ -1,5 +1,5 @@
 import { guard, checked, fail } from '@/lib/security/context';
-import { uploadImport } from '@/features/imports/service';
+import { uploadImport, signedImport } from '@/features/imports/service';
 import { z } from 'zod';
 export async function GET(request: Request) {
   try {
@@ -34,14 +34,7 @@ export async function GET(request: Request) {
       .order('id', { ascending: false })
       .range((page - 1) * size, page * size - 1);
     const rows = checked(result) || [];
-    const items = await Promise.all(
-      rows.map(async (row) => {
-        const signed = checked(
-          await ctx.db.storage.from('brand-assets').createSignedUrl(row.storage_path, 900),
-        );
-        return { ...row, url: signed?.signedUrl };
-      }),
-    );
+    const items = await Promise.all(rows.map((row) => signedImport(ctx, row)));
     return Response.json(
       { items, total: result.count || 0, page, pageSize: size },
       { headers: { 'Cache-Control': 'private, no-store' } },
@@ -52,11 +45,11 @@ export async function GET(request: Request) {
 }
 export async function POST(request: Request) {
   try {
-    const ctx = await guard(request, 'write'),
+    const ctx = await guard(request, 'write', 64 * 1024 * 1024),
       form = await request.formData();
-    const file = form.get('file');
-    if (!(file instanceof File)) throw new Error('invalid_input');
-    const row = await uploadImport(ctx, z.uuid().parse(form.get('agent_id')), file);
+    const files = form.getAll('file');
+    if (files.some((file) => !(file instanceof File))) throw new Error('invalid_input');
+    const row = await uploadImport(ctx, z.uuid().parse(form.get('agent_id')), files as File[]);
     return Response.json(row, { status: 201 });
   } catch (e) {
     return fail(e);

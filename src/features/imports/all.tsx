@@ -5,7 +5,8 @@ import { Button, Card, Notice, Modal, api } from '@/components/ui';
 import { SocialLogo } from '@/components/social-logos';
 import type { Channel } from '@/lib/domain';
 import styles from './view.module.css';
-type ImportRow = {
+import { ImportPreview, type ImportPreviewRecord } from './preview';
+type ImportRow = ImportPreviewRecord & {
   id: string;
   title: string;
   caption: string;
@@ -174,37 +175,20 @@ export function AllImports({
             </Button>
           </nav>
         </div>
-        <Card className={styles.preview}>
-          <h2>Preview da postagem</h2>
-          {selected ? (
-            <>
-              <div className="preview-frame phone">
-                <header>
-                  {selected.channel ? <SocialLogo channel={selected.channel} /> : null}
-                  <strong>{selected.title || 'Sua publicação'}</strong>
-                </header>
-                <img
-                  src={selected.url}
-                  alt="Imagem original importada"
-                  width={selected.width}
-                  height={selected.height}
-                  style={{ width: '100%', height: 'auto', objectFit: 'contain' }}
-                />
-                <p className={styles.caption}>{selected.caption}</p>
-              </div>
-              <div className="form-row">
-                <a href={selected.url} target="_blank" rel="noreferrer">
-                  Abrir imagem
-                </a>
-                <a href={'/api/imports/' + selected.id + '?download=1'} download>
-                  Baixar
-                </a>
-              </div>
-            </>
-          ) : (
+        {selected ? (
+          <ImportPreview
+            key={selected.id}
+            item={selected}
+            title={selected.title || 'Sua publicação'}
+            caption={selected.caption}
+            channel={selected.channel}
+          />
+        ) : (
+          <Card className={styles.preview}>
+            <h2>Preview da postagem</h2>
             <p>Selecione uma importação.</p>
-          )}
-        </Card>
+          </Card>
+        )}
       </div>
       {deleting ? (
         <Modal

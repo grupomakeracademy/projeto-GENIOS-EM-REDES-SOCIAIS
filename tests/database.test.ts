@@ -8,6 +8,20 @@ const A = '00000000-0000-4000-8000-000000000001',
   E = '00000000-0000-4000-8000-000000000003',
   V = '00000000-0000-4000-8000-000000000004';
 let wa: string, wb: string, agentA: string;
+it.each([2,6])('retains %i ordered slides through draft save, reopen and idempotent finalization',async count=>{
+  const id=randomUUID();
+  const images=Array.from({length:count},(_,n)=>({storage_path:`workspace/${wa}/imports/${id}/${n}.png`,mime_type:'image/png',width:720+n,height:1280}));
+  await db.query(`insert into content_imports(id,workspace_id,agent_id,created_by,storage_path,mime_type,width,height,images) values($1,$2,$3,$4,$5,'image/png',720,1280,$6)`,[id,wa,agentA,A,images[0].storage_path,JSON.stringify(images)]);
+  await db.query(`select save_import_draft($1,$2,$3,$4)`,[wa,A,id,JSON.stringify({title:'Carrossel',caption:'Legenda preservada',channel:'instagram'})]);
+  expect((await db.query<{images:unknown}>(`select images from import_overview where id=$1`,[id])).rows[0].images).toEqual(images);
+  const sql=`select finalize_content_import($1,$2,$3,'instagram','Legenda preservada') as id`;
+  const content=(await db.query<{id:string}>(sql,[wa,id,A])).rows[0].id;
+  expect((await db.query<{id:string}>(sql,[wa,id,A])).rows[0].id).toBe(content);
+  const media=await db.query(`select m.storage_path,m.position from content_media m join content_variants v on m.variant_id=v.id where v.content_id=$1 order by m.position`,[content]);
+  expect(media.rows).toEqual(images.map((image,position)=>({storage_path:image.storage_path,position})));
+  expect((await db.query<{image_prompts:string[]}>(`select image_prompts from content_variants where content_id=$1`,[content])).rows[0].image_prompts).toHaveLength(count);
+  await expect(db.query(`update content_imports set images=$1 where id=$2`,[JSON.stringify(images.slice(0,1)),id])).rejects.toThrow('import_images_locked');
+});
 it('imports original media once into existing content and isolates drafts by workspace',async()=>{
   const id=randomUUID();
   await db.query(`insert into content_imports(id,workspace_id,agent_id,created_by,storage_path,mime_type,width,height) values($1,$2,$3,$4,$5,'image/jpeg',720,1280)`,[id,wa,agentA,A,`workspace/${wa}/imports/${id}/original.jpg`]);
@@ -63,6 +77,7 @@ beforeAll(async () => {
     '202609150001_content_imports.sql',
     '202609150002_caption_import_management.sql',
     '202609150003_import_caption_save.sql',
+    '202609150004_import_carousel.sql',
   ]) {
     const sql = await readFile(
       new URL(`../supabase/migrations/${filename}`, import.meta.url),
