@@ -6,7 +6,13 @@ import { Upload } from 'lucide-react';
 import { Card, Button, Field, Notice, api } from '@/components/ui';
 import { ImportPreview, type ImportPreviewRecord } from './preview';
 import { MAX_IMPORT_IMAGES, MAX_IMPORT_IMAGE_BYTES } from './images';
-import { channels, type Channel } from '@/lib/domain';
+import {
+  channels,
+  type Channel,
+  type Destination,
+  destinations,
+  getChannelDestinations,
+} from '@/lib/domain';
 import type { Capabilities } from '@/lib/social/connectors';
 import styles from './view.module.css';
 import { CaptionEditor } from '@/features/captions/editor';
@@ -40,6 +46,7 @@ export function ImportView({
     agents.find((a) => a.id === params.get('agent'))?.id || agents[0]?.id || '',
   );
   const [title, setTitle] = useState('');
+  const [destination, setDestination] = useState<Destination | ''>('');
   const [draft, setDraft] = useState<Draft | null>(null),
     [caption, setCaption] = useState(''),
     [channel, setChannel] = useState<Channel | ''>('');
@@ -122,6 +129,14 @@ export function ImportView({
   }
   const selected = accounts.find((a) => a.id === account),
     activeChannel = selected?.channel || channel;
+  const supportedDestinations = activeChannel ? getChannelDestinations(activeChannel) : (['feed'] as Destination[]);
+  const effectiveDestination =
+    supportedDestinations.length === 1
+      ? 'feed'
+      : destination && supportedDestinations.includes(destination as Destination)
+      ? destination
+      : '';
+  const isDestinationValid = !activeChannel || supportedDestinations.length === 1 || !!effectiveDestination;
   const editable = canEdit && !busy && draft?.import_status !== 'Publicado';
   const ready =
     editable &&
@@ -129,8 +144,8 @@ export function ImportView({
     !!caption.trim() &&
     !!activeChannel &&
     caption.length <= channels[activeChannel].limit;
-  const canPublish = ready && !!selected && capabilities[selected.channel]?.canPublish;
-  const canSchedule = ready && !!selected && capabilities[selected.channel]?.canSchedule;
+  const canPublish = ready && !!selected && capabilities[selected.channel]?.canPublish && isDestinationValid;
+  const canSchedule = ready && !!selected && capabilities[selected.channel]?.canSchedule && isDestinationValid;
   async function saveDraft() {
     await api('imports/' + draft!.id, 'PATCH', {
       title,
@@ -148,6 +163,7 @@ export function ImportView({
         channel: activeChannel,
         connection_id: account || undefined,
         scheduled_at: action === 'schedule' ? new Date(`${date}T${time}`).toISOString() : undefined,
+        destination: effectiveDestination || undefined,
       });
       await load(draft!.id);
       await refreshRecent();
@@ -328,6 +344,26 @@ export function ImportView({
                 </select>
               </Field>
             ) : null}
+            {activeChannel ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, margin: '8px 0 12px' }}>
+                <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--foreground)' }}>
+                  Onde deseja publicar?
+                </label>
+                <div className="carousel-segmented-control" style={{ alignSelf: 'flex-start' }}>
+                  {supportedDestinations.map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      disabled={!editable}
+                      className={`carousel-pill ${effectiveDestination === d ? 'active' : ''}`}
+                      onClick={() => setDestination(d)}
+                    >
+                      {destinations[d].label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <div className={styles.dates}>
               <Field label="Data">
                 <input
@@ -409,6 +445,7 @@ export function ImportView({
                 setCaption('');
                 setMessage('');
                 setAccount('');
+                setDestination('');
               }}
             >
               Nova importação

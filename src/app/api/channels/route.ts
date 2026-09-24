@@ -3,6 +3,7 @@ import { channelSchema, channels } from '@/lib/domain';
 import { guard, checked, fail, AppError } from '@/lib/security/context';
 import { requireAgent } from '@/lib/security/agent';
 import { adminClient } from '@/lib/supabase/server';
+import { encrypt } from '@/lib/security/crypto';
 
 export async function GET(request: Request) {
   try {
@@ -17,12 +18,12 @@ export async function GET(request: Request) {
     );
     const connections: Record<
       string,
-      { connected: boolean; accountName?: string; connectedAt?: string }
+      { connected: boolean; accountName?: string; connectedAt?: string; externalId?: string }
     > = {};
     for (const ch of Object.keys(channels)) {
       const found = rows?.find((r: { channel: string }) => r.channel === ch);
       connections[ch] = found
-        ? { connected: true, accountName: found.account_name, connectedAt: found.created_at }
+        ? { connected: true, accountName: found.account_name, connectedAt: found.created_at, externalId: found.external_id }
         : { connected: false };
     }
     return Response.json(
@@ -45,6 +46,7 @@ export async function POST(request: Request) {
         action: z.enum(['connect', 'disconnect', 'assign']).default('connect'),
         account_name: z.string().trim().max(160).optional(),
         token: z.string().trim().max(2000).optional(),
+        external_id: z.string().trim().max(160).optional(),
       })
       .parse(await request.json());
     await requireAgent(ctx, body.agent_id);
@@ -77,6 +79,18 @@ export async function POST(request: Request) {
     }
 
     const accountName = body.account_name || `@${body.channel}_oficial`;
+    const externalId = body.external_id || crypto.randomUUID();
+
+    let tokenCiphertext = body.token || 'demo_connected';
+    if (body.token) {
+      try {
+        tokenCiphertext = encrypt(body.token, ctx.workspaceId);
+      } catch {
+        // Fallback se CREDENTIAL_MASTER_KEY não estiver configurada no ambiente local
+        tokenCiphertext = body.token;
+      }
+    }
+
     checked(
       await adminClient()
         .from('social_connections')
@@ -86,9 +100,12 @@ export async function POST(request: Request) {
             agent_id: body.agent_id,
             channel: body.channel,
             account_name: accountName,
-            external_id: crypto.randomUUID(),
-            token_ciphertext: body.token || 'demo_connected',
-            metadata: { connected_via: body.token ? 'manual_token' : 'demo' },
+            external_id: externalId,
+            token_ciphertext: tokenCiphertext,
+            metadata: {
+              connected_via: body.token ? 'manual_token' : 'demo',
+              external_id: body.external_id || null,
+            },
             created_at: new Date().toISOString(),
           },
           { onConflict: 'workspace_id,agent_id,channel' },
@@ -100,6 +117,7 @@ export async function POST(request: Request) {
       connected: true,
       channel: body.channel,
       accountName,
+      externalId,
     });
   } catch (e) {
     return fail(e);

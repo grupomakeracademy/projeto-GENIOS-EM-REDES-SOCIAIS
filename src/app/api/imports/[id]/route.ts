@@ -2,7 +2,7 @@ import { guard, checked, fail, AppError } from '@/lib/security/context';
 import { importRecord, finalizeImport, signedImport } from '@/features/imports/service';
 import { importImages } from '@/features/imports/images';
 import { adminClient } from '@/lib/supabase/server';
-import { channelSchema } from '@/lib/domain';
+import { channelSchema, destinationSchema } from '@/lib/domain';
 import { z } from 'zod';
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -48,6 +48,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         channel: channelSchema.default('instagram'),
         connection_id: z.uuid().optional(),
         scheduled_at: z.iso.datetime().optional(),
+        destination: destinationSchema.optional(),
       })
       .parse(await request.json());
     return Response.json(await finalizeImport(ctx, id, body));

@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import { guard, checked, fail, AppError } from '@/lib/security/context';
 import { adminClient } from '@/lib/supabase/server';
-import { channels, channelSchema, type Channel } from '@/lib/domain';
+import { channels, channelSchema, type Channel, destinationSchema } from '@/lib/domain';
 import { requireAgent } from '@/lib/security/agent';
+import { publishVariantContent } from '@/lib/social/publisher';
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const ctx = await guard(request),
@@ -139,15 +140,55 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }
     if (action === 'schedule') {
       const v = z
-        .object({ scheduled_at: z.iso.datetime(), variant_id: z.uuid().optional() })
+        .object({
+          scheduled_at: z.iso.datetime(),
+          variant_id: z.uuid().optional(),
+          destination: destinationSchema.optional(),
+        })
         .parse(raw);
       if (Date.parse(v.scheduled_at) <= Date.now()) throw new AppError('invalid_schedule');
       Object.assign(payload, v);
+
+      if (v.destination) {
+        const curStrat = (item.strategy as Record<string, unknown>) || {};
+        await db
+          .from('content_items')
+          .update({
+            strategy: {
+              ...curStrat,
+              destination: v.destination,
+            },
+          })
+          .eq('id', id)
+          .eq('workspace_id', ctx.workspaceId);
+      }
     }
     if (action === 'publish') {
-      const v = z.object({ variant_id: z.uuid().optional() }).safeParse(raw);
+      const v = z.object({
+        variant_id: z.uuid().optional(),
+        destination: destinationSchema.optional(),
+      }).safeParse(raw);
       if (v.success && v.data.variant_id) {
         payload.variant_id = v.data.variant_id;
+      }
+      const destination = v.success ? v.data.destination : undefined;
+      try {
+        await publishVariantContent({
+          workspaceId: ctx.workspaceId,
+          contentId: id,
+          variantId: payload.variant_id as string | undefined,
+          actorId: ctx.user.id,
+          destination,
+        });
+        return Response.json({ ok: true });
+      } catch (pubErr) {
+        console.error('[API content publish] Error:', pubErr);
+        throw new AppError(
+          pubErr instanceof Error && pubErr.message.startsWith('channel_not_connected')
+            ? 'channel_not_connected'
+            : 'social_publish_failed',
+          400,
+        );
       }
     }
     if (action === 'reject')
@@ -190,6 +231,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         cta: z.string().max(500).optional(),
         channels: z.array(channelSchema).min(1),
         image_count: z.number().int().min(1).max(6).default(2),
+        destination: destinationSchema.optional(),
         status: z.enum(['DRAFT']).default('DRAFT'),
       })
       .parse(await request.json());
@@ -204,7 +246,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     const existing = checked(
       await ctx.db
         .from('content_items')
-        .select('id, status, created_by, workspace_id')
+        .select('id, status, created_by, workspace_id, strategy')
         .eq('id', id)
         .eq('workspace_id', ctx.workspaceId)
         .maybeSingle(),
@@ -215,6 +257,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
 
     const topic = body.instruction.trim() || 'Novo rascunho de conteúdo';
+    const existingStrat = (existing.strategy as Record<string, unknown>) || {};
     const strategy = {
       image_style: body.image_style || 'Disney / Pixar',
       image_quality: body.image_quality || 'low',
@@ -223,6 +266,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       channels: body.channels,
       image_count: body.image_count,
       instruction: body.instruction.trim(),
+      destination: body.destination || existingStrat.destination || 'feed',
     };
 
     const { error: updateErr } = await db

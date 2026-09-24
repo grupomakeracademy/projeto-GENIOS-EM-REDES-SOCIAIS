@@ -6,9 +6,43 @@ import { jobSchema, runPipeline, regenerate, renewLease } from './pipeline';
 import { ProviderError } from '@/lib/ai/provider-error';
 import { withAICallContext } from '@/lib/ai/audit';
 import { assertJobEligible } from './eligibility';
+import { publishVariantContent } from '@/lib/social/publisher';
+
 export async function tick() {
   const db = adminClient(),
     now = new Date();
+
+  // Processar conteúdos agendados que atingiram o horário de publicação
+  const dueItems = checked(
+    await db
+      .from('content_items')
+      .select('id, workspace_id, scheduled_at')
+      .eq('status', 'SCHEDULED')
+      .lte('scheduled_at', now.toISOString())
+      .limit(10),
+  );
+
+  for (const item of dueItems || []) {
+    try {
+      await db
+        .from('content_items')
+        .update({ status: 'PUBLISHING' })
+        .eq('id', item.id)
+        .eq('status', 'SCHEDULED');
+
+      await publishVariantContent({
+        workspaceId: item.workspace_id,
+        contentId: item.id,
+      });
+    } catch (schedErr) {
+      console.error(`[Worker] Failed to publish scheduled content ${item.id}:`, schedErr);
+      await db
+        .from('content_items')
+        .update({ status: 'FAILED' })
+        .eq('id', item.id);
+    }
+  }
+
   const schedules = checked(
     await db
       .from('agent_schedules')

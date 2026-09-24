@@ -9,6 +9,7 @@ import { usableOverride, type AgentAIRecord } from './agent-config';
 import { validateAgentModel } from './validate-model';
 import { AppError } from '@/lib/security/context';
 import { withAICallContext, type AICallContext } from './audit';
+import { enforceModelPolicy } from './model-policy';
 export async function credential(workspaceId: string, provider: ProviderId) {
   void workspaceId; // Credentials are exclusively server-wide environment values.
   const server = serverCredential(provider);
@@ -63,7 +64,7 @@ export class AIService {
   }
   async config(purpose: AIConfig['purpose']) {
     const custom = await this.override(purpose);
-    if (custom) return custom.config;
+    if (custom) return enforceModelPolicy(custom.config);
     const { data, error } = await adminClient()
       .from('ai_provider_configs')
       .select('purpose,provider,model,enabled')
@@ -74,7 +75,7 @@ export class AIService {
     if (data?.enabled === false) throw new Error('provider_missing');
     const config = data ?? openAIDefaults().find((c) => c.purpose === purpose);
     if (!config) throw new Error('provider_missing');
-    return configSchema.parse(config);
+    return enforceModelPolicy(configSchema.parse(config));
   }
   async text<T>(purpose: 'text' | 'orchestrator', schema: z.ZodType<T>, context: unknown) {
     const config = await this.config(purpose);

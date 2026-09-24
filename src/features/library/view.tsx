@@ -1160,7 +1160,7 @@ export function Library({
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxHeight: '65vh', overflowY: 'auto' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ padding: '3px 8px', borderRadius: 6, background: '#f1f5f9', color: '#475569', fontSize: '12px' }}>
-                Modelo: <strong>{viewDnaAsset.processor_model || 'gpt-4o'}</strong>
+                Modelo: <strong>{viewDnaAsset.processor_model || 'gpt-4o-mini'}</strong>
               </span>
               <span style={{ padding: '3px 8px', borderRadius: 6, background: '#f1f5f9', color: '#475569', fontSize: '12px' }}>
                 Hash: <code>{viewDnaAsset.content_hash ? viewDnaAsset.content_hash.slice(0, 12) + '...' : 'N/A'}</code>

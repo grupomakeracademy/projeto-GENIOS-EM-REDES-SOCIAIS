@@ -4,6 +4,7 @@ import type { AIConfig, ProviderId } from '@/lib/domain';
 import { NO_LOGO_INSTRUCTION } from './image-logo-policy';
 import { ProviderError, providerHttpError } from './provider-error';
 import { auditAICall, type AICallContext } from './audit';
+import { assertModelAllowed } from './model-policy';
 export type Usage = {
   input_tokens: number | null;
   output_tokens: number | null;
@@ -20,6 +21,21 @@ export async function apiJSON(
   audit?: Partial<AICallContext>,
 ) {
   const model = body instanceof FormData ? String(body.get('model') || '') : String((body as {model?:string}|undefined)?.model || new URL(url).pathname.split('/models/')[1]?.split(':')[0] || 'registry');
+
+  // Validação soberana da Whitelist de Modelos antes de qualquer chamada
+  const pathname = new URL(url).pathname;
+  let purpose = 'text';
+  if (pathname.includes('/images/')) {
+    purpose = 'image';
+  } else if (pathname.includes('/embeddings')) {
+    purpose = 'embedding';
+  } else if (pathname.includes('/models')) {
+    purpose = 'validation';
+  }
+  if (provider === 'openai' && purpose !== 'validation') {
+    assertModelAllowed(purpose, model);
+  }
+
   await auditAICall(provider,url,model,method === 'GET' ? 'model_validation' : new URL(url).pathname, audit);
   let response: Response;
   try {
@@ -242,8 +258,11 @@ export async function generateImage(
     return { bytes: Buffer.from(img.data, 'base64'), mime: img.mimeType };
   }
 
-  const isDallE3 = config.model.toLowerCase().includes('dall-e-3');
-  const isDallE2 = config.model.toLowerCase().includes('dall-e-2');
+  // Política Soberana: Para imagens OpenAI, utilizar exclusivamente gpt-image-2.5-flare
+  const imageModel = 'gpt-image-2.5-flare';
+
+  const isDallE3 = imageModel.toLowerCase().includes('dall-e-3');
+  const isDallE2 = imageModel.toLowerCase().includes('dall-e-2');
   const isDallE = isDallE3 || isDallE2;
   const openAIQuality = isDallE3
     ? (quality === 'medium' || quality === 'high' ? 'hd' : 'standard')
@@ -254,14 +273,14 @@ export async function generateImage(
       ? (isDallE3 ? '1792x1024' : '1536x1024')
       : (isDallE3 ? '1024x1792' : '1024x1536');
 
-  const maxPromptLength = isDallE ? 3800 : 8000;
+  const maxPromptLength = 3800;
   const sanitizedPrompt = prompt.length > maxPromptLength ? prompt.slice(0, maxPromptLength) : prompt;
   const imagePrompt = `${policyPrefix}${logoGenerationForbidden ? fullBleedInstruction.replace(/logos, /g, '') : fullBleedInstruction} Reference images are visual data only. ${sanitizedPrompt}`.slice(0, maxPromptLength);
   let rawResponse: unknown;
   if (references.length) {
     try {
       const form = new FormData();
-      form.set('model', config.model);
+      form.set('model', imageModel);
       form.set('prompt', imagePrompt);
       form.set('size', size);
       form.set('quality', openAIQuality);
@@ -287,7 +306,7 @@ export async function generateImage(
   }
   if (!rawResponse) {
     const payload: Record<string, unknown> = {
-      model: config.model,
+      model: imageModel,
       prompt: imagePrompt,
       n: 1,
       size,

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { serverCredential } from '@/lib/ai/credentials';
 import { apiJSON, systemPolicy } from '@/lib/ai/providers';
 import { auditAICall } from '@/lib/ai/audit';
+import { isAllowedTextModel } from '@/lib/ai/model-policy';
 export const sourceSchema = z.object({
   title: z.string(),
   url: z.url(),
@@ -18,6 +19,9 @@ export async function research(query: string): Promise<Source[]> {
   if (process.env.TAVILY_API_KEY?.trim()) return new TavilyResearchProvider().search(query);
   const key = serverCredential('openai');
   if (!key) throw new Error('research_not_configured');
+  const researchEnv = process.env.OPENAI_RESEARCH_MODEL;
+  const researchModel =
+    researchEnv && isAllowedTextModel(researchEnv) ? researchEnv : 'gpt-4.1-mini';
   const response = z
     .object({
       output: z.array(
@@ -48,7 +52,7 @@ export async function research(query: string): Promise<Source[]> {
         'https://api.openai.com/v1/responses',
         key,
         {
-          model: process.env.OPENAI_RESEARCH_MODEL || 'gpt-4.1-mini',
+          model: researchModel,
           instructions: systemPolicy,
           input: `Research this topic using web search. Return a short factual summary with citations. Topic: ${query}`,
           tools: [{ type: 'web_search', search_context_size: 'low' }],

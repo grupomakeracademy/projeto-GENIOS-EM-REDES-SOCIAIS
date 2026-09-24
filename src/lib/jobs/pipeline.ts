@@ -424,6 +424,9 @@ export async function runPipeline(job: Job) {
         image_quality: input.image_quality || (job.payload as Record<string, unknown>)?.image_quality || 'low',
         is_carousel: input.is_carousel ?? (job.payload as Record<string, unknown>)?.is_carousel ?? false,
         cta: input.cta || (job.payload as Record<string, unknown>)?.cta || strategy.cta || '',
+        destination: isRoutine
+          ? ((routineSettings.destination as string) || ((job.payload as Record<string, unknown>)?.destination as string) || 'feed')
+          : (((job.payload as Record<string, unknown>)?.destination as string) || ((input as Record<string, unknown>)?.destination as string) || 'feed'),
       },
       variants,
       approval: agent.approval_required,

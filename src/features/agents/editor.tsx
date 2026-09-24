@@ -19,12 +19,21 @@ import {
   MousePointerClick,
   Minus,
   X,
+  Send,
 } from 'lucide-react';
 import { SocialLogo } from '@/components/social-logos';
 import './agents.css';
 import '../content/content.css';
 import { Button, Card, Field, Notice, Empty, useT, useAction, api } from '@/components/ui';
-import { channels, type Agent, type Asset, type Channel } from '@/lib/domain';
+import {
+  channels,
+  type Agent,
+  type Asset,
+  type Channel,
+  type Destination,
+  destinations,
+  getChannelsDestinations,
+} from '@/lib/domain';
 import { useLocale } from '@/components/ui';
 
 const ALL_ROUTINE_CHANNELS: Channel[] = ['instagram', 'facebook', 'whatsapp', 'tiktok', 'x', 'linkedin'];
@@ -344,6 +353,17 @@ export function AgentEditor({
   const [routineCta, setRoutineCta] = useState<string>(
     (initialRs.cta as string) || '',
   );
+  const [routineDestination, setRoutineDestination] = useState<Destination>(
+    (initialRs.destination as Destination) || 'feed',
+  );
+
+  // Dynamic destinations based on selected channels
+  const supportedRoutineDestinations = getChannelsDestinations(routineChannels);
+  useEffect(() => {
+    if (!supportedRoutineDestinations.includes(routineDestination)) {
+      setRoutineDestination('feed');
+    }
+  }, [supportedRoutineDestinations, routineDestination]);
 
   // Prompt Mágico state for Card 3
   const [routinePautaBusy, setRoutinePautaBusy] = useState(false);
@@ -371,6 +391,7 @@ export function AgentEditor({
     );
     setRoutineIsCarousel(Boolean(rs.is_carousel));
     setRoutineCta((rs.cta as string) || '');
+    setRoutineDestination((rs.destination as Destination) || 'feed');
     setRoutinePautaMagicUsed(false);
     setRoutineCtaMagicUsed(false);
     setRoutineMagicError('');
@@ -1196,6 +1217,27 @@ export function AgentEditor({
                         </div>
                       </div>
 
+                      {/* Onde deseja publicar? */}
+                      <div className="new-content-carousel-row">
+                        <div className="carousel-toggle-label">
+                          <Send size={18} className="carousel-icon" />
+                          <span>Onde deseja publicar?</span>
+                        </div>
+                        <div className="carousel-segmented-control">
+                          {supportedRoutineDestinations.map((d) => (
+                            <button
+                              key={d}
+                              type="button"
+                              disabled={!canEdit}
+                              className={`carousel-pill ${routineDestination === d ? 'active' : ''}`}
+                              onClick={() => setRoutineDestination(d)}
+                            >
+                              {destinations[d].label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
                       {/* CTA */}
                       <div className="new-content-field">
                         <div className="field-label-with-action">
@@ -1272,6 +1314,7 @@ export function AgentEditor({
                               image_count: routineCount,
                               is_carousel: routineIsCarousel,
                               cta: routineCta,
+                              destination: routineDestination,
                             }
                           : ((selected.routine_settings as Record<string, unknown>) || {});
 

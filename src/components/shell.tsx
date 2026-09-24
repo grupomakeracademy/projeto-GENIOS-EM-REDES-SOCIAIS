@@ -144,6 +144,32 @@ export function Shell({
               </span>
             )}
           </Link>
+          <button
+            className="icon-button topbar-logout-btn"
+            title={t('logout')}
+            aria-label={t('logout')}
+            onClick={async () => {
+              await api('auth', 'POST', { action: 'logout' });
+              router.push('/login');
+              router.refresh();
+            }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 10px',
+              borderRadius: 6,
+              border: '1px solid var(--border)',
+              background: 'var(--canvas)',
+              color: 'var(--muted)',
+              cursor: 'pointer',
+              fontSize: '13px',
+              fontWeight: 500,
+            }}
+          >
+            <LogOut size={16} />
+            <span>{t('logout')}</span>
+          </button>
           {role !== 'VIEWER' ? (
             <Link
               className="button"

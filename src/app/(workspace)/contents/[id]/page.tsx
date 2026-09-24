@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import { z } from 'zod';
 import { context, checked, required } from '@/lib/security/context';
+import { adminClient } from '@/lib/supabase/server';
 import { ContentDetail } from '@/features/content/detail';
 import type { Content, Agent } from '@/lib/domain';
 export default async function Page({ params }: { params: Promise<{ id: string }> }) {
@@ -38,7 +39,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   const events = checked(
     await ctx.db
       .from('content_events')
-      .select('id,event,created_at')
+      .select('id,event,created_at,metadata')
       .eq('content_id', id)
       .eq('workspace_id', ctx.workspaceId)
       .order('created_at', { ascending: false })
@@ -46,7 +47,10 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   );
   const [companyRes, connectionsRes, agentsRes, wsSettings] = await Promise.all([
     ctx.db.from('workspaces').select('name,timezone').eq('id', ctx.workspaceId).single(),
-    ctx.db.from('social_connections').select('id,channel,account_name,created_at').eq('workspace_id', ctx.workspaceId),
+    adminClient()
+      .from('social_connections')
+      .select('id,agent_id,channel,account_name,created_at')
+      .eq('workspace_id', ctx.workspaceId),
     ctx.db.from('agents').select('*').eq('workspace_id', ctx.workspaceId).limit(100),
     ctx.db.from('workspace_settings').select('settings').eq('workspace_id', ctx.workspaceId).maybeSingle(),
   ]);

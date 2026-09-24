@@ -2,9 +2,43 @@ import 'server-only';
 import type { AIConfig } from '@/lib/domain';
 import { AppError } from '@/lib/security/context';
 import { auditAICall } from './audit';
+import {
+  isAllowedTextModel,
+  isAllowedImageModel,
+  isAllowedEmbeddingModel,
+  ALLOWED_TEXT_MODELS,
+  ALLOWED_IMAGE_MODELS,
+  ALLOWED_EMBEDDING_MODELS,
+} from './model-policy';
 
 // Read-only provider probe: no prompts, generated assets or secret-bearing logs.
 export async function validateAgentModel(config: AIConfig, key: string) {
+  // Verificação estrita da Política Global antes de qualquer chamada ou probe
+  if (config.provider === 'openai') {
+    if (config.purpose === 'image') {
+      if (!isAllowedImageModel(config.model)) {
+        throw new AppError(
+          `Modelo de imagem não autorizado pela Política Global. O único modelo autorizado é: ${ALLOWED_IMAGE_MODELS.join(', ')}.`,
+          400,
+        );
+      }
+    } else if (config.purpose === 'embedding') {
+      if (!isAllowedEmbeddingModel(config.model)) {
+        throw new AppError(
+          `Modelo de embedding não autorizado pela Política Global. Modelos autorizados: ${ALLOWED_EMBEDDING_MODELS.join(', ')}.`,
+          400,
+        );
+      }
+    } else {
+      if (!isAllowedTextModel(config.model)) {
+        throw new AppError(
+          `Modelo de texto não autorizado pela Política Global de Modelos e Custos. Modelos autorizados na whitelist: ${ALLOWED_TEXT_MODELS.join(', ')}.`,
+          400,
+        );
+      }
+    }
+  }
+
   const model = encodeURIComponent(config.model.replace(/^models\//, ''));
   const base =
     config.provider === 'openai'

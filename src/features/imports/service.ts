@@ -3,8 +3,9 @@ import sharp from 'sharp';
 import { adminClient } from '@/lib/supabase/server';
 import { AppError, checked, required, type context } from '@/lib/security/context';
 import { validateFile } from '@/lib/security/uploads';
-import { channels, type Channel } from '@/lib/domain';
+import { channels, type Channel, type Destination } from '@/lib/domain';
 import { connectors } from '@/lib/social/connectors';
+import { publishVariantContent } from '@/lib/social/publisher';
 import { importImages, MAX_IMPORT_IMAGES, MAX_IMPORT_IMAGE_BYTES } from './images';
 type Context = Awaited<ReturnType<typeof context>>;
 
@@ -230,6 +231,7 @@ export async function finalizeImport(
     action: 'save' | 'publish' | 'schedule';
     connection_id?: string;
     scheduled_at?: string;
+    destination?: Destination;
   },
 ) {
   const row = await importRecord(ctx, id);
@@ -258,7 +260,35 @@ export async function finalizeImport(
       caption_text: input.caption,
     }),
   );
-  if (input.action !== 'save') {
+
+  if (input.destination) {
+    const existing = await db
+      .from('content_items')
+      .select('strategy')
+      .eq('id', contentId)
+      .eq('workspace_id', ctx.workspaceId)
+      .maybeSingle();
+    const strat = (existing?.data?.strategy as Record<string, unknown>) || {};
+    await db
+      .from('content_items')
+      .update({
+        strategy: {
+          ...strat,
+          destination: input.destination,
+        },
+      })
+      .eq('id', contentId)
+      .eq('workspace_id', ctx.workspaceId);
+  }
+
+  if (input.action === 'publish') {
+    await publishVariantContent({
+      workspaceId: ctx.workspaceId,
+      contentId,
+      actorId: ctx.user.id,
+      destination: input.destination,
+    });
+  } else if (input.action === 'schedule') {
     const item = required(
       await ctx.db
         .from('content_items')
@@ -267,17 +297,18 @@ export async function finalizeImport(
         .eq('workspace_id', ctx.workspaceId)
         .single(),
     );
-    if (item.status !== (input.action === 'publish' ? 'PUBLISHED' : 'SCHEDULED'))
+    if (item.status !== 'SCHEDULED') {
       checked(
         await db.rpc('mutate_content', {
           w: ctx.workspaceId,
           c: contentId,
           expected: item.version,
-          operation: input.action,
+          operation: 'schedule',
           actor_id: ctx.user.id,
-          payload: input.action === 'schedule' ? { scheduled_at: input.scheduled_at } : {},
+          payload: { scheduled_at: input.scheduled_at },
         }),
       );
+    }
   }
   return { content_id: contentId };
 }

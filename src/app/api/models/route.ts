@@ -4,6 +4,11 @@ import { guard, checked, fail, AppError } from '@/lib/security/context';
 import { credential } from '@/lib/ai/service';
 import { apiJSON } from '@/lib/ai/providers';
 import { openAIModels } from '@/lib/ai/defaults';
+import {
+  isAllowedTextModel,
+  isAllowedImageModel,
+  isAllowedEmbeddingModel,
+} from '@/lib/ai/model-policy';
 export async function GET(request: Request) {
   try {
     const ctx = await guard(request);
@@ -41,6 +46,17 @@ export async function POST(request: Request) {
     const input = configSchema
       .safeExtend({ display_name: z.string().trim().min(1).max(160) })
       .parse(await request.json());
+    if (input.provider === 'openai') {
+      if (input.purpose === 'image' && !isAllowedImageModel(input.model)) {
+        throw new AppError('Modelo de imagem não autorizado pela Política Global. Apenas gpt-image-2.5-flare é permitido.', 400);
+      }
+      if (input.purpose === 'embedding' && !isAllowedEmbeddingModel(input.model)) {
+        throw new AppError('Modelo de embedding não autorizado pela Política Global.', 400);
+      }
+      if ((input.purpose === 'text' || input.purpose === 'orchestrator') && !isAllowedTextModel(input.model)) {
+        throw new AppError('Modelo de texto não autorizado pela Política Global de Modelos e Custos.', 400);
+      }
+    }
     if (input.purpose === 'embedding' && input.provider !== 'openai')
       throw new AppError('unsupported_capability');
     const path =

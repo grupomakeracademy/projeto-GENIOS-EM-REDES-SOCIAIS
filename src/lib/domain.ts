@@ -44,8 +44,8 @@ export const transitions: Record<Status, Status[]> = {
   ROUTINE: ['GENERATING', 'APPROVED', 'REJECTED', 'ARCHIVED'],
   GENERATING: ['ROUTINE', 'AWAITING_REVIEW', 'FAILED'],
   AWAITING_REVIEW: ['APPROVED', 'REJECTED', 'GENERATING', 'ARCHIVED'],
-  APPROVED: ['SCHEDULED', 'AWAITING_REVIEW', 'ROUTINE', 'ARCHIVED'],
-  SCHEDULED: ['PUBLISHING', 'APPROVED', 'AWAITING_REVIEW', 'ARCHIVED'],
+  APPROVED: ['SCHEDULED', 'AWAITING_REVIEW', 'ROUTINE', 'ARCHIVED', 'PUBLISHING', 'PUBLISHED'],
+  SCHEDULED: ['PUBLISHING', 'APPROVED', 'AWAITING_REVIEW', 'ARCHIVED', 'PUBLISHED'],
   PUBLISHING: ['PUBLISHED', 'FAILED'],
   PUBLISHED: ['ARCHIVED'],
   FAILED: ['ROUTINE', 'GENERATING', 'AWAITING_REVIEW', 'ARCHIVED'],
@@ -58,6 +58,26 @@ export function canTransition(from: Status, to: Status) {
 export function permitted(role: Role, action: 'read' | 'write' | 'admin') {
   return action === 'read' || (action === 'write' && role !== 'VIEWER') || role === 'ADMIN';
 }
+export const destinations = {
+  feed: { id: 'feed', label: 'Feed' },
+  stories: { id: 'stories', label: 'Stories' },
+  feed_and_stories: { id: 'feed_and_stories', label: 'Feed e Stories' },
+} as const;
+export type Destination = keyof typeof destinations;
+export const destinationSchema = z.enum(['feed', 'stories', 'feed_and_stories']);
+
+export function getChannelDestinations(channel: Channel): Destination[] {
+  if (channel === 'instagram' || channel === 'facebook') {
+    return ['feed', 'stories', 'feed_and_stories'];
+  }
+  return ['feed'];
+}
+
+export function getChannelsDestinations(selectedChannels: Channel[]): Destination[] {
+  const hasStories = selectedChannels.some((c) => c === 'instagram' || c === 'facebook');
+  return hasStories ? ['feed', 'stories', 'feed_and_stories'] : ['feed'];
+}
+
 export const routineSettingsSchema = z
   .object({
     image_style: z.string().default('Disney / Pixar'),
@@ -67,6 +87,7 @@ export const routineSettingsSchema = z
     image_count: z.number().int().min(1).max(6).default(1),
     is_carousel: z.boolean().default(false),
     cta: z.string().default(''),
+    destination: destinationSchema.default('feed'),
   })
   .default({
     image_style: 'Disney / Pixar',
@@ -76,6 +97,7 @@ export const routineSettingsSchema = z
     image_count: 1,
     is_carousel: false,
     cta: '',
+    destination: 'feed',
   });
 
 export const agentSchema = z.object({

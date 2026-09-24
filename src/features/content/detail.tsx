@@ -29,7 +29,14 @@ import {
   useAction,
   api,
 } from '@/components/ui';
-import { channels, type Content, type Agent } from '@/lib/domain';
+import {
+  channels,
+  type Content,
+  type Agent,
+  type Destination,
+  destinations,
+  getChannelDestinations,
+} from '@/lib/domain';
 import { ContentFormModal } from './modal';
 export function ContentDetail({
   initial,
@@ -45,8 +52,8 @@ export function ContentDetail({
   company: string;
   timezone: string;
   canEdit: boolean;
-  events: { id: string; event: string; created_at: string }[];
-  connections?: { id: string; channel: string; account_name?: string; created_at: string }[];
+  events: { id: string; event: string; created_at: string; metadata?: Record<string, unknown> }[];
+  connections?: { id: string; agent_id?: string; channel: string; account_name?: string; created_at: string }[];
   agents?: Agent[];
   defaultImageQuality?: 'low' | 'medium';
 }) {
@@ -62,6 +69,8 @@ export function ContentDetail({
           initial.content_variants.findIndex((v) => v.channel === channelParam),
         )
       : 0,
+    savedDestination = (initial.strategy as Record<string, unknown>)?.destination as Destination | undefined,
+    [destination, setDestination] = useState<Destination | ''>(savedDestination || ''),
     [item, setItem] = useState(initial),
     [index, setIndex] = useState(initialIndex >= 0 ? initialIndex : 0),
     [caption, setCaption] = useState(
@@ -79,6 +88,15 @@ export function ContentDetail({
   const isDraft = item.status === 'DRAFT';
   const variant = item.content_variants[index];
 
+  const supportedDestinations = variant ? getChannelDestinations(variant.channel as any) : (['feed'] as Destination[]);
+  const effectiveDestination =
+    supportedDestinations.length === 1
+      ? 'feed'
+      : destination && supportedDestinations.includes(destination as Destination)
+      ? destination
+      : '';
+  const isDestinationValid = supportedDestinations.length === 1 || !!effectiveDestination;
+
   // All media items for this variant and position, sorted chronologically / by version
   const positionMedias = (variant?.content_media || [])
     .filter((m) => m.position === position)
@@ -92,7 +110,9 @@ export function ContentDetail({
       : positionMedias[positionMedias.length - 1];
   const media = activeMedia;
 
-  const connection = connections.find((c) => c.channel === variant?.channel);
+  const connection =
+    connections.find((c: any) => c.agent_id === item.agent_id && c.channel === variant?.channel) ||
+    connections.find((c) => c.channel === variant?.channel);
   const isConnected = !!connection;
   const [previewOpen, setPreviewOpen] = useState(false);
   const requestedReturn = searchParams.get('returnTo') || '';
@@ -442,6 +462,40 @@ export function ContentDetail({
                   </Button>
                 </>
               ) : null}
+              {variant?.status === 'PUBLISHED' || item.status === 'PUBLISHED' ? (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    padding: '12px 16px',
+                    background: '#ecfdf5',
+                    borderRadius: 8,
+                    border: '1px solid #6ee7b7',
+                    color: '#065f46',
+                    marginBottom: 12,
+                    fontSize: '13px',
+                    width: '100%',
+                  }}
+                >
+                  <CheckCircle2 size={18} style={{ color: '#059669', flexShrink: 0 }} />
+                  <div>
+                    <strong>Conteúdo publicado no {channels[variant.channel]?.name || 'Canal'}!</strong>
+                    {events.find((e) => e.event === 'PUBLISH' && (e.metadata as any)?.external_post_url) ? (
+                      <div style={{ marginTop: 4 }}>
+                        <a
+                          href={String((events.find((e) => e.event === 'PUBLISH' && (e.metadata as any)?.external_post_url)?.metadata as any)?.external_post_url)}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ color: '#047857', fontWeight: 600, textDecoration: 'underline' }}
+                        >
+                          Ver publicação na rede social →
+                        </a>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
               {item.status === 'APPROVED' ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%', marginBottom: 8 }}>
                   {isConnected ? (
@@ -465,10 +519,31 @@ export function ContentDetail({
                           <strong>@{connection?.account_name || 'conta-vinculada'}</strong>
                         </span>
                       </div>
+                      {/* Onde deseja publicar? */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, margin: '2px 0 4px' }}>
+                        <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--foreground)' }}>
+                          Onde deseja publicar?
+                        </label>
+                        <div className="carousel-segmented-control" style={{ alignSelf: 'flex-start' }}>
+                          {supportedDestinations.map((d) => (
+                            <button
+                              key={d}
+                              type="button"
+                              className={`carousel-pill ${effectiveDestination === d ? 'active' : ''}`}
+                              onClick={() => setDestination(d)}
+                            >
+                              {destinations[d].label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
                       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
                         <Button
                           busy={action.busy}
-                          onClick={() => operation('publish', { variant_id: variant?.id })}
+                          disabled={!isDestinationValid}
+                          title={!isDestinationValid ? 'Selecione onde deseja publicar antes de prosseguir' : undefined}
+                          onClick={() => operation('publish', { variant_id: variant?.id, destination: effectiveDestination })}
                           style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
                         >
                           <Send size={14} />
@@ -486,11 +561,13 @@ export function ContentDetail({
                         <Button
                           secondary
                           busy={action.busy}
-                          disabled={!date}
+                          disabled={!date || !isDestinationValid}
+                          title={!isDestinationValid ? 'Selecione onde deseja publicar antes de prosseguir' : undefined}
                           onClick={() =>
                             operation('schedule', {
                               scheduled_at: DateTime.fromISO(date, { zone: timezone }).toUTC().toISO(),
                               variant_id: variant?.id,
+                              destination: effectiveDestination,
                             })
                           }
                           style={{ marginTop: 8, display: 'inline-flex', alignItems: 'center', gap: 6 }}

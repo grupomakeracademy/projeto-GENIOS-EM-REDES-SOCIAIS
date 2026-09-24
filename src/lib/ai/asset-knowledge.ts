@@ -222,7 +222,7 @@ export async function processAssetKnowledge(
 
     let interpretation: VisualReferenceInterpretation | DocumentReferenceInterpretation;
     let summaryText: string;
-    const model = process.env.OPENAI_VISION_MODEL || 'gpt-4o';
+    const model = process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini';
 
     if (isImage) {
       // 3. Single Vision Call for images
