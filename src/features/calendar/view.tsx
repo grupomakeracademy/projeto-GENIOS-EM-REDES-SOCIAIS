@@ -23,6 +23,7 @@ export type CalendarContentItem = {
   topic: string;
   status: string;
   scheduled_at: string | null;
+  event_at: string | null;
   created_at?: string;
   content_variants?: { channel: Channel }[];
 };
@@ -173,7 +174,7 @@ export function Calendar({
               <Button secondary aria-label={t('following')} onClick={() => move(1)}>
                 <ChevronRight size={18} />
               </Button>
-              <h2 className="cal-month-title">{selected.toFormat('LLLL de yyyy')}</h2>
+              <h2 className="cal-month-title">{selected.toFormat("LLLL 'de' yyyy")}</h2>
               <Button
                 secondary
                 onClick={() => {
@@ -215,8 +216,8 @@ export function Calendar({
                         </Link>
                       </div>
                       <small className="muted">
-                        {item.scheduled_at
-                          ? DateTime.fromISO(item.scheduled_at)
+                        {item.event_at
+                          ? DateTime.fromISO(item.event_at)
                               .setZone(timezone)
                               .setLocale(locale)
                               .toLocaleString(DateTime.DATETIME_MED)
@@ -249,8 +250,8 @@ export function Calendar({
                     const isOutside = day.month !== selected.month;
                     const isToday = day.hasSame(DateTime.now().setZone(timezone), 'day');
                     const dayContents = items.filter((c) =>
-                      c.scheduled_at
-                        ? DateTime.fromISO(c.scheduled_at).setZone(timezone).hasSame(day, 'day')
+                      c.event_at
+                        ? DateTime.fromISO(c.event_at).setZone(timezone).hasSame(day, 'day')
                         : false,
                     );
 
@@ -271,8 +272,8 @@ export function Calendar({
                           {dayContents.map((c) => {
                             const ch = c.content_variants?.[0]?.channel || 'instagram';
                             const colors = channelColorPastels[ch] || channelColorPastels.instagram;
-                            const timeStr = c.scheduled_at
-                              ? DateTime.fromISO(c.scheduled_at).setZone(timezone).toFormat('HH:mm')
+                            const timeStr = c.event_at
+                              ? DateTime.fromISO(c.event_at).setZone(timezone).toFormat('HH:mm')
                               : '';
 
                             return (
@@ -282,8 +283,8 @@ export function Calendar({
                                 href={`/contents/${c.id}`}
                                 title={`${c.topic} (${ch} • ${timeStr})`}
                                 style={{
-                                  background: colors.bg,
-                                  borderColor: colors.border,
+                                  background: `color-mix(in srgb, ${colors.text} 12%, var(--surface))`,
+                                  borderColor: 'var(--border)',
                                 }}
                               >
                                 <div className="cal-pill-logo">
@@ -323,11 +324,9 @@ export function Calendar({
               {upcoming.length ? (
                 upcoming.map((item) => {
                   const ch = item.content_variants?.[0]?.channel || 'instagram';
-                  const schedDate = item.scheduled_at
-                    ? DateTime.fromISO(item.scheduled_at).setZone(timezone)
-                    : item.created_at
-                      ? DateTime.fromISO(item.created_at).setZone(timezone)
-                      : null;
+                  const schedDate = item.event_at
+                    ? DateTime.fromISO(item.event_at).setZone(timezone)
+                    : null;
 
                   const isToday = schedDate?.hasSame(DateTime.now().setZone(timezone), 'day');
                   const isTomorrow = schedDate?.hasSame(

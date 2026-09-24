@@ -2,12 +2,14 @@ import { z } from 'zod';
 import { guard, checked, fail, AppError } from '@/lib/security/context';
 import { adminClient } from '@/lib/supabase/server';
 import { channelSchema } from '@/lib/domain';
-import { AIService } from '@/lib/ai/service';
 import { executionResponsibles } from '@/features/content/responsibles';
 import { requireAgent } from '@/lib/security/agent';
+import { dispatchRequestedJob } from '@/lib/jobs/lifecycle';
+export const maxDuration = 900;
 export async function GET(request: Request) {
   try {
     const ctx = await guard(request);
+    checked(await adminClient().rpc('expire_generation_jobs'));
     const agentId=await requireAgent(ctx,new URL(request.url).searchParams.get('agent'));
     const jobs = checked(
       await ctx.db
@@ -57,45 +59,9 @@ export async function PATCH(request: Request) {
   try {
     const ctx = await guard(request, 'write');
     const { id } = z.object({ id: z.uuid() }).parse(await request.json());
-    const job = checked(
-      await ctx.db
-        .from('background_jobs')
-        .select('id')
-        .eq('workspace_id', ctx.workspaceId)
-        .eq('id', id)
-        .eq('type', 'agent_run')
-        .eq('status', 'FAILED')
-        .maybeSingle(),
-    );
-    if (!job) throw new AppError('conflict', 409);
-    const updated = checked(
-      await adminClient()
-        .from('background_jobs')
-        .update({
-          status: 'PENDING',
-          attempts: 0,
-          last_error: null,
-          lease_until: null,
-          lock_token: null,
-          completed_at: null,
-          scheduled_at: new Date().toISOString(),
-        })
-        .eq('id', id)
-        .eq('workspace_id', ctx.workspaceId)
-        .eq('status', 'FAILED')
-        .select('id')
-        .maybeSingle(),
-    );
-    if (!updated) throw new AppError('conflict', 409);
-    await adminClient()
-      .from('agent_runs')
-      .update({ status: 'PENDING', error_code: null })
-      .eq('job_id', id);
-    await adminClient()
-      .from('content_items')
-      .update({ status: 'GENERATING' })
-      .eq('id', id)
-      .eq('workspace_id', ctx.workspaceId);
+    const result = await adminClient().rpc('retry_requested_job', { j: id, w: ctx.workspaceId, actor_id: ctx.user.id });
+    if (result.error || !result.data) throw new AppError('conflict', 409);
+    dispatchRequestedJob(result.data, ctx.workspaceId, ctx.user.id);
     return Response.json({ ok: true });
   } catch (e) {
     return fail(e);
@@ -165,97 +131,17 @@ export async function POST(request: Request) {
       );
     }
 
-    const ai = new AIService(ctx.workspaceId, undefined, input.agent_id);
-    for (const purpose of [
-      'orchestrator',
-      'text',
-      'embedding',
-      ...(input.image_count ? ['image'] : []),
-    ] as const) {
-      const config = await ai.config(purpose as 'orchestrator' | 'text' | 'embedding' | 'image');
-      await ai.key(config);
-    }
-    const db = adminClient(),
-      key = `${ctx.workspaceId}:manual:${input.idempotency_key}`;
-
-    if (input.content_id) {
-      await db
-        .from('content_items')
-        .update({
-          agent_id: input.agent_id,
-          topic: input.instruction.trim() || 'Conteúdo gerado',
-          strategy: {
-            image_style: input.image_style || 'Disney / Pixar',
-            image_quality: input.image_quality || 'low',
-            is_carousel: input.is_carousel ?? false,
-            cta: input.cta || '',
-            channels: input.channels,
-            image_count: input.image_count,
-            instruction: input.instruction.trim(),
-          },
-          status: 'GENERATING',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', input.content_id)
-        .eq('workspace_id', ctx.workspaceId);
-
-      await db.from('content_events').insert({
-        workspace_id: ctx.workspaceId,
-        content_id: input.content_id,
-        actor: ctx.user.id,
-        event: 'CONTENT_GENERATION_STARTED',
-        metadata: { origin: 'draft', channels: input.channels },
-      });
-
-      checked(
-        await db.from('background_jobs').upsert(
-          {
-            id: input.content_id,
-            workspace_id: ctx.workspaceId,
-            type: 'agent_run',
-            status: 'PENDING',
-            attempts: 0,
-            last_error: null,
-            completed_at: null,
-            lease_until: null,
-            lock_token: null,
-            scheduled_at: new Date().toISOString(),
-            payload: { ...input, created_by: ctx.user.id, origin: 'manual', content_id: input.content_id },
-            idempotency_key: key,
-          },
-          { onConflict: 'id' },
-        ),
-      );
-
-      return Response.json(
-        {
-          job: checked(
-            await db.from('background_jobs').select('id,status').eq('id', input.content_id).single(),
-          ),
-        },
-        { status: 202 },
-      );
-    }
-
-    checked(
-      await db.from('background_jobs').upsert(
-        {
-          workspace_id: ctx.workspaceId,
-          type: 'agent_run',
-          payload: { ...input, created_by: ctx.user.id, origin: 'manual' },
-          idempotency_key: key,
-        },
-        { onConflict: 'idempotency_key', ignoreDuplicates: true },
-      ),
-    );
-    return Response.json(
-      {
-        job: checked(
-          await db.from('background_jobs').select('id,status').eq('idempotency_key', key).single(),
-        ),
-      },
-      { status: 202 },
-    );
+    // Provider validation runs inside the claimed job so every probe is attributed.
+    const db = adminClient();
+    const queued = await db.rpc('enqueue_manual_generation', {
+      w: ctx.workspaceId, a: input.agent_id, actor_id: ctx.user.id,
+      p: input, k: `${ctx.workspaceId}:manual:${input.idempotency_key}`, c: input.content_id || null,
+    });
+    if (queued.error || !queued.data) throw new AppError('conflict', 409);
+    const job = checked(await db.from('background_jobs').select('id,status').eq('id', queued.data).single());
+    if (!job) throw new AppError('internal_error', 500);
+    dispatchRequestedJob(job.id, ctx.workspaceId, ctx.user.id);
+    return Response.json({ job }, { status: 202 });
   } catch (e) {
     return fail(e);
   }

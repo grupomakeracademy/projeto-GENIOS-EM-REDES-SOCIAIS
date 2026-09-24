@@ -1,9 +1,10 @@
+import { uploadAccountFile } from '@/lib/account-storage';
 import { z } from 'zod';
 import { guard, checked, required, fail, AppError } from '@/lib/security/context';
 import { adminClient } from '@/lib/supabase/server';
 import { validateFile } from '@/lib/security/uploads';
-import { isSuperAdmin } from '@/lib/security/super-admin';
 import { computeContentHash, processAssetKnowledge } from '@/lib/ai/asset-knowledge';
+import { assetProcessingMessage } from '@/lib/ai/asset-processing-errors';
 export async function GET(request: Request) {
   try {
     const ctx = await guard(request),
@@ -42,31 +43,6 @@ export async function POST(request: Request) {
       throw new AppError('Envio em massa limitado a 50 megas por envio.', 400);
     }
 
-    // Check user's storage quota (default 100 MB, -1 or null = unlimited)
-    const { data: userAssets } = await ctx.db
-      .from('assets')
-      .select('size')
-      .eq('created_by', ctx.user.id);
-    const usedBytes = (userAssets || []).reduce((acc, a) => acc + (a.size || 0), 0);
-
-    const isSuper = isSuperAdmin(ctx.user);
-    const { data: profile } = await ctx.db
-      .from('profiles')
-      .select('storage_quota_mb')
-      .eq('id', ctx.user.id)
-      .maybeSingle();
-
-    const quotaMB = isSuper ? -1 : (profile?.storage_quota_mb ?? 100);
-    const isUnlimited = isSuper || quotaMB === -1 || quotaMB === null;
-
-    if (!isUnlimited && usedBytes + batchSize > quotaMB * 1024 * 1024) {
-      const usedMB = (usedBytes / (1024 * 1024)).toFixed(1);
-      throw new AppError(
-        `Capacidade de armazenamento excedida (${usedMB} MB de ${quotaMB} MB utilizados). Contate o Super Admin para liberar mais espaço.`,
-        400,
-      );
-    }
-
     const db = adminClient();
     const uploadedAssets: Array<{ id: string; name: string }> = [];
 
@@ -77,11 +53,7 @@ export async function POST(request: Request) {
       const path = `workspace/${ctx.workspaceId}/library/${id}.${ext}`;
       const hash = computeContentHash(bytes);
 
-      checked(
-        await db.storage
-          .from('brand-assets')
-          .upload(path, bytes, { contentType: file.type, upsert: false }),
-      );
+      await uploadAccountFile({ workspaceId:ctx.workspaceId, userId:ctx.user.id, path, bytes, contentType:file.type });
 
       const category = String(form.get('category') || 'reference').slice(0, 80);
       const identityName = form.get('identity_name') ? String(form.get('identity_name')).trim().slice(0, 120) : null;
@@ -185,6 +157,9 @@ export async function PATCH(request: Request) {
       }
 
       const result = await processAssetKnowledge(input.id, { force: true });
+      if (result.status === 'failed') {
+        return Response.json({ ok: false, status: result.status, error: assetProcessingMessage(result.error) }, { status: 502 });
+      }
       return Response.json({ ok: true, ...result });
     }
     if (raw.action === 'associate') {

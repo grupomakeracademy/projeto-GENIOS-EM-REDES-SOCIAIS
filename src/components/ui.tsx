@@ -148,6 +148,9 @@ export async function api(path: string, method = 'GET', body?: unknown) {
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'internal_error');
+  if (method !== 'GET' && typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('storage-updated'));
+  }
   return data;
 }
 export function useAction() {

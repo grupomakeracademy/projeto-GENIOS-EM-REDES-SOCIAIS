@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
-import { tick } from '@/lib/jobs/worker';
+
 import { fail } from '@/lib/security/context';
 export const runtime = 'nodejs';
 export async function POST(request: Request) {
@@ -12,7 +12,7 @@ export async function POST(request: Request) {
   )
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   try {
-    return Response.json(await tick());
+    return Response.json({ error: 'continuous_generation_disabled' }, { status: 410 });
   } catch (e) {
     return fail(e);
   }

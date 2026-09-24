@@ -6,6 +6,7 @@ import { File, Upload, HardDrive, Shield, Lock, X } from 'lucide-react';
 import { Card, Button, Field, Empty, Modal, Notice, useT, useAction, api } from '@/components/ui';
 import type { Asset } from '@/lib/domain';
 import { AssetAgents, type AssetAgent } from './agent-assets';
+import { assetProcessingMessage } from '@/lib/ai/asset-processing-errors';
 
 export type UserQuotaItem = {
   id: string;
@@ -25,7 +26,7 @@ export function Library({
   page,
   agents,
   userUsedBytes = 0,
-  userQuotaMB = 100,
+  userQuotaMB = 2048,
 }: {
   items: Asset[];
   canEdit: boolean;
@@ -53,6 +54,7 @@ export function Library({
     [savingUserId, setSavingUserId] = useState<string | null>(null),
     [viewDnaAsset, setViewDnaAsset] = useState<Asset | null>(null),
     [reprocessingId, setReprocessingId] = useState<string | null>(null),
+    [processingError, setProcessingError] = useState(''),
     [uploadCategory, setUploadCategory] = useState<
       'reference' | 'protected_identity' | 'exact_asset'
     >('reference'),
@@ -63,11 +65,13 @@ export function Library({
 
   async function handleReprocess(assetId: string) {
     setReprocessingId(assetId);
+    setProcessingError('');
     try {
       await api('assets', 'PATCH', { action: 'reprocess', id: assetId });
       router.refresh();
     } catch (err) {
-      console.error('Falha ao reprocessar ativo:', err);
+      setProcessingError(err instanceof Error ? err.message : 'Não foi possível processar o arquivo.');
+      router.refresh();
     } finally {
       setReprocessingId(null);
     }
@@ -89,7 +93,7 @@ export function Library({
         const initialMap: Record<string, { value: number; unlimited: boolean }> = {};
         for (const u of res.users) {
           initialMap[u.id] = {
-            value: u.quotaMB === -1 ? 100 : u.quotaMB,
+            value: u.quotaMB === -1 ? 2048 : u.quotaMB,
             unlimited: u.isUnlimited,
           };
         }
@@ -130,6 +134,7 @@ export function Library({
       </div>
 
       {/* Storage quota card */}
+      {processingError && <p role="alert" style={{ color: 'var(--danger)' }}>{processingError}</p>}
       <Card style={{ marginBottom: 18 }}>
         <div
           style={{
@@ -156,7 +161,7 @@ export function Library({
             </div>
             <div>
               <strong style={{ fontSize: '15px', color: '#0f172a' }}>
-                Armazenamento da Biblioteca
+                Armazenamento total da conta
               </strong>
               <div style={{ fontSize: '13px', color: '#64748b', marginTop: 2 }}>
                 {isUnlimited ? (
@@ -632,11 +637,7 @@ export function Library({
                         fontWeight: 600,
                         border: '1px solid #fecaca',
                       }}
-                      title={
-                        asset.processing_error === 'rate_limit'
-                          ? 'Limite temporário da OpenAI atingido (Rate limit). Clique em Processar para tentar novamente.'
-                          : asset.processing_error || 'Erro no processamento'
-                      }
+                      title={assetProcessingMessage(asset.processing_error || undefined)}
                     >
                       ⚠ Falha ({asset.processing_error === 'rate_limit' ? 'Limite da API' : 'Erro'})
                     </span>
@@ -954,7 +955,7 @@ export function Library({
             >
               {adminUsers.map((u) => {
                 const conf = quotaEditValues[u.id] || {
-                  value: u.quotaMB === -1 ? 100 : u.quotaMB,
+                  value: u.quotaMB === -1 ? 2048 : u.quotaMB,
                   unlimited: u.isUnlimited,
                 };
                 const uMB = (u.usedBytes / (1024 * 1024)).toFixed(1);

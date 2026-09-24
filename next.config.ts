@@ -1,7 +1,7 @@
 import type { NextConfig } from 'next';
 const config: NextConfig = {
   poweredByHeader: false,
-  experimental: { proxyClientMaxBodySize: '64mb' },
+  experimental: { proxyClientMaxBodySize: '512mb' },
   async headers() {
     return [
       {

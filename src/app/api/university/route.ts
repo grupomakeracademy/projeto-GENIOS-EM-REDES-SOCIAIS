@@ -3,6 +3,7 @@ import { guard, checked, fail, AppError } from '@/lib/security/context';
 import { adminClient } from '@/lib/supabase/server';
 import { validateFile } from '@/lib/security/uploads';
 import type { UniversitySort, UniversityVideo } from '@/features/university/types';
+import { requireSuperAdmin } from '@/lib/security/super-admin';
 
 export async function GET(request: Request) {
   try {
@@ -35,7 +36,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const ctx = await guard(request, 'write');
+    const ctx = await guard(request);
+    requireSuperAdmin(ctx.user);
     const contentType = request.headers.get('content-type') || '';
 
     let title = '';
@@ -113,7 +115,8 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    const ctx = await guard(request, 'write');
+    const ctx = await guard(request);
+    requireSuperAdmin(ctx.user);
     const contentType = request.headers.get('content-type') || '';
 
     let id = '';
@@ -205,7 +208,8 @@ export async function PATCH(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    await guard(request, 'write');
+    const ctx = await guard(request);
+    requireSuperAdmin(ctx.user);
     const { id } = z.object({ id: z.string().uuid() }).parse(await request.json());
 
     const db = adminClient();

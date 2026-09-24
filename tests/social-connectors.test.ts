@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   connectors,
   InstagramConnector,
@@ -118,4 +118,20 @@ describe('Social Connectors and Publishing', () => {
       expect(decrypted).toBe(rawToken);
     });
   });
+});
+
+it.each(['feed','stories','feed_and_stories'] as const)('publishes original video for supported Instagram %s destinations',async destination=>{
+ const calls:{url:string;body:Record<string,unknown>}[]=[];
+ vi.stubGlobal('fetch',vi.fn(async (url:string,options?:RequestInit)=>{
+ const body=options?.body?JSON.parse(String(options.body)):{};
+ calls.push({url,body});
+ return {ok:true,json:async()=>url.includes('fields=status_code')?{status_code:'FINISHED'}:{id:'official-media-id'}};
+ }));
+ const result=await new InstagramConnector().publish({caption:'Original video',mediaUrls:['https://example.test/original.mp4'],mediaType:'video',channel:'instagram',token:'official-token',externalId:'business-id',destination});
+ expect(result.success).toBe(true);
+ const containers=calls.filter(c=>c.url.endsWith('/media'));
+ expect(containers).toHaveLength(destination==='feed_and_stories'?2:1);
+ expect(containers.every(c=>c.body.video_url==='https://example.test/original.mp4' && !c.body.image_url)).toBe(true);
+ expect(containers.map(c=>c.body.media_type)).toEqual(destination==='feed_and_stories'?['REELS','STORIES']:[destination==='feed'?'REELS':'STORIES']);
+ vi.unstubAllGlobals();
 });

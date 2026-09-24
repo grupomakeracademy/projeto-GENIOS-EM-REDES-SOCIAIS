@@ -47,7 +47,8 @@ export async function validateAgentModel(config: AIConfig, key: string) {
         ? 'https://api.anthropic.com/v1/models/'
         : 'https://generativelanguage.googleapis.com/v1beta/models/';
   let response: Response;
-  await auditAICall(config.provider,base+model,config.model,'model_validation',{trigger:'system_internal',source:'src/lib/ai/validate-model.ts:validateAgentModel',reason:'model_configuration_validation'});
+  const finishAudit = await auditAICall(config.provider,base+model,config.model,'model_validation',{source:'src/lib/ai/validate-model.ts:validateAgentModel',reason:'model_configuration_validation'});
+  try {
   try {
     response = await fetch(base + model, {
       headers:
@@ -95,4 +96,9 @@ export async function validateAgentModel(config: AIConfig, key: string) {
       throw new AppError('Modelo incompatível com a função selecionada.');
   }
   if (config.provider === 'anthropic' && !metadata.id) throw new AppError('Modelo inválido.');
+  finishAudit?.('completed');
+  } catch (error) {
+    finishAudit?.('failed');
+    throw error;
+  }
 }

@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import {
   FileText,
-  SquareCheck,
+  CircleCheck,
   CalendarDays,
   Clock,
   Bot,
@@ -37,39 +37,22 @@ export function Dashboard({
   const t = useT(),
     locale = useLocale();
 
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-  const dateRangeStr = `${startOfMonth.toLocaleDateString(locale, { day: '2-digit', month: 'short', year: 'numeric' })} – ${endOfMonth.toLocaleDateString(locale, { day: '2-digit', month: 'short', year: 'numeric' })}`;
-
   const statConfigs = [
     {
       icon: FileText,
       label: t('totalContent'),
-      color: '#2563eb',
-      bg: '#eff6ff',
-      trend: '+12%',
     },
     {
-      icon: SquareCheck,
+      icon: CircleCheck,
       label: t('published'),
-      color: '#10b981',
-      bg: '#ecfdf5',
-      trend: '+18%',
     },
     {
       icon: CalendarDays,
       label: t('scheduled'),
-      color: '#8b5cf6',
-      bg: '#f5f3ff',
-      trend: '+24%',
     },
     {
       icon: Clock,
       label: t('review'),
-      color: '#f43f5e',
-      bg: '#fff1f2',
-      trend: '+9%',
     },
   ];
 
@@ -78,13 +61,10 @@ export function Dashboard({
       {/* Top Welcome Header */}
       <div className="dashboard-header">
         <div className="dashboard-welcome">
-          <h1>Olá, {name}! 👋</h1>
+          <h1>Olá, {name}!</h1>
           <p>{t('overview')}</p>
         </div>
-        <div className="dashboard-date-badge">
-          <CalendarDays size={16} color="var(--muted)" />
-          <span>{dateRangeStr}</span>
-        </div>
+
       </div>
 
       {/* 4 Stat Cards */}
@@ -95,7 +75,7 @@ export function Dashboard({
             <Card className="dash-stat-card" key={i}>
               <div
                 className="dash-stat-icon-container"
-                style={{ background: cfg.bg, color: cfg.color }}
+
               >
                 <Icon size={24} />
               </div>
@@ -163,7 +143,7 @@ export function Dashboard({
                   <div key={c.id} className="dash-recent-item">
                     <div className="dash-recent-thumb-wrapper">
                       <div className="dash-recent-thumb">
-                        <FileText size={18} color="#64748b" />
+                        <FileText size={18} color="var(--muted)" />
                       </div>
                       <span className="dash-recent-logo-badge">
                         {assignedChannel && <SocialLogo channel={assignedChannel} size={14} />}
@@ -211,7 +191,7 @@ export function Dashboard({
             <div className="dash-bottom-icon-title">
               <div
                 className="dash-bottom-icon-box"
-                style={{ background: '#eff6ff', color: '#2563eb' }}
+
               >
                 <Bot size={22} />
               </div>
@@ -234,7 +214,7 @@ export function Dashboard({
             <div className="dash-bottom-icon-title">
               <div
                 className="dash-bottom-icon-box"
-                style={{ background: '#ecfdf5', color: '#10b981' }}
+
               >
                 <CalendarDays size={22} />
               </div>

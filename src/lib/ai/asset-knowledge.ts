@@ -7,6 +7,8 @@ import { serverCredential } from '@/lib/ai/credentials';
 import { apiJSON, openAISchema } from '@/lib/ai/providers';
 import type { Agent } from '@/lib/domain';
 import type { ExactLogoPolicy } from './image-logo-policy';
+import { assetProcessingCode } from './asset-processing-errors';
+import { ProviderError } from './provider-error';
 
 export const visualReferenceInterpretationSchema = z.object({
   reference_type: z.enum([
@@ -118,6 +120,17 @@ export async function processAssetKnowledge(
 ): Promise<ProcessAssetResult> {
   const db = adminClient();
 
+  let stage = 'asset_lookup';
+  let visionCallsMade = 0;
+  const model = process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini';
+  function requireWrite(result: { error: unknown }) {
+    if (result.error) {
+      const code = typeof result.error === 'object' && result.error && 'code' in result.error ? String(result.error.code) : '';
+      console.error('[Asset Knowledge] Database write rejected', { assetId, stage, code: /^[a-zA-Z0-9_]{1,40}$/.test(code) ? code : 'unknown' });
+      throw new Error('asset_persistence_failed');
+    }
+  }
+
   const { data: asset, error: fetchErr } = await db
     .from('assets')
     .select('id, workspace_id, name, category, mime_type, storage_path, content_hash, processing_status, textual_interpretation, summary_text')
@@ -128,13 +141,13 @@ export async function processAssetKnowledge(
     return {
       assetId,
       status: 'failed',
-      error: fetchErr?.message || 'asset_not_found',
+      error: fetchErr ? 'asset_persistence_failed' : 'asset_not_found',
       visionCallsMade: 0,
     };
   }
 
   // Categories that use raw original files directly (never consume vision/AI API tokens)
-  if ((asset as any).category === 'protected_identity' || (asset as any).category === 'exact_asset') {
+  if (asset.category === 'protected_identity' || asset.category === 'exact_asset') {
     return {
       assetId,
       status: 'already_processed',
@@ -154,6 +167,7 @@ export async function processAssetKnowledge(
   }
 
   try {
+    stage = 'storage_download';
     // 1. Obtain file bytes and compute hash
     let buffer: Buffer;
     if (options?.preloadedBytes) {
@@ -161,7 +175,7 @@ export async function processAssetKnowledge(
     } else {
       const download = await db.storage.from('brand-assets').download(asset.storage_path);
       if (download.error || !download.data) {
-        throw new Error(`storage_download_failed: ${download.error?.message || 'empty data'}`);
+        throw new Error('storage_download_failed');
       }
       buffer = Buffer.from(await download.data.arrayBuffer());
     }
@@ -182,7 +196,8 @@ export async function processAssetKnowledge(
 
       if (existingProcessed?.summary_text) {
         // Delta deduplication: copy interpretation directly (0 API calls!)
-        await db
+        stage = 'persist_deduplicated';
+        requireWrite(await db
           .from('assets')
           .update({
             content_hash: hash,
@@ -194,7 +209,7 @@ export async function processAssetKnowledge(
             textual_interpretation: existingProcessed.textual_interpretation,
             summary_text: existingProcessed.summary_text,
           })
-          .eq('id', asset.id);
+          .eq('id', asset.id));
 
         console.log(`[Asset Knowledge] Reused interpretation for asset "${asset.name}" via hash ${hash.slice(0, 8)} (0 API calls).`);
         return {
@@ -207,22 +222,23 @@ export async function processAssetKnowledge(
     }
 
     // Mark as processing
-    await db
+    stage = 'mark_processing';
+    requireWrite(await db
       .from('assets')
       .update({
         content_hash: hash,
         processing_status: 'processing',
         processing_error: null,
       })
-      .eq('id', asset.id);
+      .eq('id', asset.id));
 
     const isImage = asset.mime_type.startsWith('image/');
+    stage = 'provider_credentials';
     const openAIKey = serverCredential('openai');
     if (!openAIKey) throw new Error('openai_credential_missing');
 
     let interpretation: VisualReferenceInterpretation | DocumentReferenceInterpretation;
     let summaryText: string;
-    const model = process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini';
 
     if (isImage) {
       // 3. Single Vision Call for images
@@ -244,6 +260,8 @@ export async function processAssetKnowledge(
         },
       ];
 
+      stage = 'vision_request';
+      visionCallsMade += 1;
       const raw = await apiJSON(
         'https://api.openai.com/v1/chat/completions',
         openAIKey,
@@ -265,6 +283,7 @@ export async function processAssetKnowledge(
         'openai', 'POST', {trigger:'user_action',source:'src/lib/ai/asset-knowledge.ts:processAssetKnowledge',reason:'reference_analysis'},
       );
 
+      stage = 'parse_vision_response';
       const parsedResponse = z
         .object({
           choices: z.array(
@@ -278,7 +297,7 @@ export async function processAssetKnowledge(
         .parse(raw);
 
       const contentStr = parsedResponse.choices[0]?.message.content;
-      if (!contentStr) throw new Error('empty_vision_response');
+      if (!contentStr) throw new Error('invalid_output');
 
       const parsed = visualReferenceInterpretationSchema.parse(JSON.parse(contentStr));
       interpretation = parsed;
@@ -334,7 +353,8 @@ export async function processAssetKnowledge(
     }
 
     // 5. Persist the knowledge representation
-    await db
+    stage = 'persist_result';
+    requireWrite(await db
       .from('assets')
       .update({
         content_hash: hash,
@@ -346,7 +366,7 @@ export async function processAssetKnowledge(
         textual_interpretation: interpretation,
         summary_text: summaryText,
       })
-      .eq('id', asset.id);
+      .eq('id', asset.id));
 
     console.log(`[Asset Knowledge] Successfully processed asset "${asset.name}" (${asset.id}). 1 vision call made.`);
 
@@ -357,22 +377,25 @@ export async function processAssetKnowledge(
       visionCallsMade: isImage ? 1 : 0,
     };
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    console.error(`[Asset Knowledge] Failed processing asset ${assetId}:`, errorMsg);
+    const errorMsg = assetProcessingCode(err);
+    console.error('[Asset Knowledge] Processing failed', { assetId, workspaceId: asset.workspace_id,
+      category: asset.category, mimeType: asset.mime_type, model, stage, code: errorMsg,
+      ...(err instanceof ProviderError ? { provider: err.diagnostic } : {}) });
 
-    await db
+    const failureWrite = await db
       .from('assets')
       .update({
         processing_status: 'failed',
         processing_error: errorMsg.slice(0, 500),
       })
       .eq('id', assetId);
+    if (failureWrite.error) console.error('[Asset Knowledge] Failed to persist failure status', { assetId, stage });
 
     return {
       assetId,
       status: 'failed',
       error: errorMsg,
-      visionCallsMade: 0,
+      visionCallsMade,
     };
   }
 }

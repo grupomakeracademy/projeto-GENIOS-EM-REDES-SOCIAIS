@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { Upload } from 'lucide-react';
 import { Card, Button, Field, Notice, api } from '@/components/ui';
 import { ImportPreview, type ImportPreviewRecord } from './preview';
+import { MAX_IMPORT_VIDEO_BYTES } from './video';
 import { MAX_IMPORT_IMAGES, MAX_IMPORT_IMAGE_BYTES } from './images';
 import {
   channels,
@@ -31,7 +32,7 @@ type Draft = ImportPreviewRecord & {
   magic_used_at: string | null;
   content_id: string | null;
 };
-type Account = { id: string; agent_id: string; channel: Channel; account_name: string };
+type Account = { id: string; agent_id: string; channel: Channel; account_name: string; capabilities?: Capabilities };
 export function ImportView({
   agents,
   canEdit,
@@ -127,16 +128,18 @@ export function ImportView({
       setBusy(false);
     }
   }
-  const selected = accounts.find((a) => a.id === account),
+  const isVideo = draft?.mime_type === 'video/mp4';
+  const compatibleAccounts = accounts.filter(a => !isVideo || (a.capabilities?.videoDestinations || []).length > 0);
+  const selected = compatibleAccounts.find((a) => a.id === account),
     activeChannel = selected?.channel || channel;
-  const supportedDestinations = activeChannel ? getChannelDestinations(activeChannel) : (['feed'] as Destination[]);
+  const supportedDestinations = activeChannel ? (isVideo ? selected?.capabilities?.videoDestinations || [] : capabilities[activeChannel]?.supportedDestinations || []) : [];
   const effectiveDestination =
     supportedDestinations.length === 1
-      ? 'feed'
+      ? supportedDestinations[0]
       : destination && supportedDestinations.includes(destination as Destination)
       ? destination
       : '';
-  const isDestinationValid = !activeChannel || supportedDestinations.length === 1 || !!effectiveDestination;
+  const isDestinationValid = supportedDestinations.length > 0 && !!effectiveDestination;
   const editable = canEdit && !busy && draft?.import_status !== 'Publicado';
   const ready =
     editable &&
@@ -144,8 +147,8 @@ export function ImportView({
     !!caption.trim() &&
     !!activeChannel &&
     caption.length <= channels[activeChannel].limit;
-  const canPublish = ready && !!selected && capabilities[selected.channel]?.canPublish && isDestinationValid;
-  const canSchedule = ready && !!selected && capabilities[selected.channel]?.canSchedule && isDestinationValid;
+  const canPublish = ready && !!selected && (selected.capabilities || capabilities[selected.channel])?.canPublish && isDestinationValid;
+  const canSchedule = ready && !!selected && (selected.capabilities || capabilities[selected.channel])?.canSchedule && isDestinationValid;
   async function saveDraft() {
     await api('imports/' + draft!.id, 'PATCH', {
       title,
@@ -176,7 +179,7 @@ export function ImportView({
       <header className="page-header">
         <div>
           <h1>Importar</h1>
-          <p>Use sua imagem pronta e prepare a legenda para suas redes sociais.</p>
+          <p>Use suas imagens ou seu vídeo pronto e prepare a legenda para suas redes sociais.</p>
         </div>
       </header>
       <Notice message={message} error={error} />
@@ -186,7 +189,7 @@ export function ImportView({
       <div className={styles.layout}>
         <div className={styles.fields}>
           <Card>
-            <h2>Imagem e legenda</h2>
+            <h2>Mídia e legenda</h2>
             <Field label="Agente">
               <select
                 value={agent}
@@ -200,19 +203,21 @@ export function ImportView({
                 ))}
               </select>
             </Field>
-            {!draft ? (
+            {!draft || (isVideo && !draft.content_id) ? (
               <label className={styles.upload}>
                 <Upload size={28} />
-                <strong>Enviar imagens prontas</strong>
-                <span>De 1 a 6 imagens · JPG, PNG ou WebP · até 10 MB por imagem</span>
+                <strong>Enviar imagens ou um vídeo MP4</strong>
+                <span>De 1 a 6 imagens · JPG, PNG ou WebP · até 10 MB por imagem · ou 1 MP4 até 500 MB</span>
                 <input
                   aria-label="Enviar imagens prontas"
                   type="file"
                   multiple
-                  accept="image/jpeg,image/png,image/webp"
+                  accept="image/jpeg,image/png,image/webp,video/mp4"
                   disabled={!editable || !agent}
                   onChange={(e) => {
-                    const files = Array.from(e.target.files || []);
+                    let files = Array.from(e.target.files || []);
+                    const videos = files.filter(f => f.type === 'video/mp4' || f.name.toLowerCase().endsWith('.mp4'));
+                    if (videos.length) files = [videos[videos.length - 1]];
                     if (!files.length) return;
                     void perform(async () => {
                       if (files.length > MAX_IMPORT_IMAGES)
@@ -233,6 +238,10 @@ export function ImportView({
                       const allowedMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg', 'image/pjpeg'];
 
                       for (const file of files) {
+                        if (file.type === 'video/mp4' || file.name.toLowerCase().endsWith('.mp4')) {
+                          if (file.size > MAX_IMPORT_VIDEO_BYTES) throw new Error('O vídeo ultrapassa o limite de 500 MB.');
+                          continue;
+                        }
                         const ext = file.name.includes('.')
                           ? '.' + file.name.split('.').pop()!.toLowerCase()
                           : '';
@@ -252,12 +261,14 @@ export function ImportView({
                       const form = new FormData();
                       files.forEach((file) => form.append('file', file));
                       form.set('agent_id', agent);
+                      if (draft && isVideo && !draft.content_id) form.set('replace_id', draft.id);
 
                       console.log('[Import Frontend] Submitting FormData to /api/imports...');
                       const row = await api('imports', 'POST', form);
                       console.log('[Import Frontend] Upload successful. Row:', row);
 
                       await load(row.id);
+                      if (draft) { setTitle(title); setCaption(caption); setAccount(account); setChannel(channel); }
                       await refreshRecent();
                     });
                     e.target.value = '';
@@ -312,14 +323,14 @@ export function ImportView({
                 <option value="">
                   {loadingAccounts ? 'Consultando canais…' : 'Selecione uma conta'}
                 </option>
-                {accounts.map((a) => (
+                {compatibleAccounts.map((a) => (
                   <option key={a.id} value={a.id}>
                     {channels[a.channel]?.name} · {a.account_name}
                   </option>
                 ))}
               </select>
             </Field>
-            {!loadingAccounts && !accounts.length ? (
+            {!loadingAccounts && !compatibleAccounts.length ? (
               <p>
                 Nenhuma conta conectada para este agente.{' '}
                 <Link href={`/channels?agent=${agent}`}>Ir para Canais</Link>

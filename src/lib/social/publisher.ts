@@ -1,3 +1,4 @@
+import { connectionCapabilities } from './connection-capabilities';
 import 'server-only';
 import { adminClient } from '@/lib/supabase/server';
 import { checked, required } from '@/lib/security/context';
@@ -74,7 +75,8 @@ export async function publishVariantContent(params: {
 
     // 5. Buscar conexão social ativa para este canal
     // Primeiro tenta pelo agente específico, depois em nível de workspace
-    let connection = checked(
+    const strategy = (item.strategy || {}) as Record<string, unknown>;
+    let connection = strategy.connection_id ? checked(await db.from('social_connections').select('*').eq('workspace_id',workspaceId).eq('id',String(strategy.connection_id)).eq('channel',channel).maybeSingle()) : checked(
       await db
         .from('social_connections')
         .select('*')
@@ -84,7 +86,7 @@ export async function publishVariantContent(params: {
         .maybeSingle(),
     );
 
-    if (!connection) {
+    if (!connection && !strategy.connection_id) {
       connection = checked(
         await db
           .from('social_connections')
@@ -117,22 +119,44 @@ export async function publishVariantContent(params: {
       destinationForChannel = 'feed';
     }
 
+    const mediaType = (medias || []).some(m => m.storage_path.toLowerCase().endsWith('.mp4')) ? 'video' : 'image';
+    if (mediaType === 'video' && (!(connectionCapabilities(channel, connection.metadata).videoDestinations || []).includes(effectiveDestination) || mediaUrls.length !== 1)) throw new Error('unsupported_capability');
     // 7. Executar a publicação no conector da rede
-    const result = await connector.publish({
+    const payload = {
       caption: variant.caption || item.topic || '',
       mediaUrls,
+      mediaType: mediaType as 'image' | 'video',
       channel,
       accountName: connection.account_name,
       token,
       externalId: connection.external_id,
       metadata: connection.metadata,
       destination: destinationForChannel,
-    });
+    };
+    let result: PublishResult;
+    if (mediaType === 'video') {
+      const targets: Destination[] = effectiveDestination === 'feed_and_stories' ? ['feed','stories'] : [effectiveDestination];
+      const receipts: PublishResult[] = [];
+      for (const destination of targets) {
+        const key = `video:${variant.id}:${destination}`;
+        const prior = checked(await db.from('content_publications').select('external_id,published_at').eq('idempotency_key',key).maybeSingle());
+        if (prior?.external_id && prior.published_at) {
+          receipts.push({success:true,externalPostId:prior.external_id,publishedAt:prior.published_at});
+          continue;
+        }
+        const receipt = await connector.publish({...payload,destination});
+        checked(await db.from('content_publications').upsert({workspace_id:workspaceId,variant_id:variant.id,idempotency_key:key,status:'PUBLISHED',external_id:receipt.externalPostId,published_at:receipt.publishedAt},{onConflict:'idempotency_key'}));
+        receipts.push(receipt);
+      }
+      result = {...receipts[receipts.length-1],externalPostId:receipts.map(r=>r.externalPostId).join(',')};
+    } else {
+      result = await connector.publish(payload);
+    }
 
     results.push(result);
 
     // 8. Atualizar status da variante e registrar evento
-    const now = new Date().toISOString();
+    const now = result.publishedAt;
     checked(
       await db
         .from('content_variants')

@@ -90,9 +90,13 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
     const ctx = await guard(request, 'write'),
       { id } = await params;
     z.uuid().parse(id);
+    const row = checked(await adminClient().from('content_imports').select('*').eq('id',id).eq('workspace_id',ctx.workspaceId).single());
+    if (!row) throw new AppError('forbidden',403);
     checked(
       await adminClient().rpc('delete_import', { w: ctx.workspaceId, a: ctx.user.id, i: id }),
     );
+    const deleted = checked(await adminClient().from('content_imports').select('content_id').eq('id',id).eq('workspace_id',ctx.workspaceId).single());
+    if (deleted && !deleted.content_id) checked(await adminClient().storage.from('brand-assets').remove(importImages(row).map(m=>m.storage_path)));
     return Response.json({ deleted: true });
   } catch (e) {
     return fail(e);

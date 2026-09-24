@@ -3,7 +3,7 @@ import sharp from 'sharp';
 vi.mock('server-only', () => ({}));
 const s = vi.hoisted(() => ({ assets: [] as any[], files: new Map<string, Buffer>(), overlay: Buffer.alloc(0), raw: Buffer.alloc(0), agent: {} as any, media: [] as any[], fail: false }));
 vi.mock('@/lib/ai/service', () => ({ AIService: class { async image() { return { bytes: s.raw, mime: 'image/png', provider: 'mock', model: 'mock' }; } } }));
-vi.mock('@/lib/supabase/server', () => ({ adminClient: () => ({
+vi.mock('@/lib/supabase/server', () => ({ adminClient: () => ({ rpc: async () => ({data:'reservation',error:null}),
   from: (table: string) => { let rows = table === 'assets' ? s.assets : []; const q: any = {
     select: () => q, eq: (k: string, v: unknown) => { rows = rows.filter(a => a[k] === v); return q; },
     in: (k: string, values: unknown[]) => { rows = rows.filter(a => values.includes(a[k])); return q; },

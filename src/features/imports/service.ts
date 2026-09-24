@@ -1,3 +1,6 @@
+import { connectionCapabilities } from '@/lib/social/connection-capabilities';
+import { uploadAccountFile } from '@/lib/account-storage';
+import { mp4Dimensions, MAX_IMPORT_VIDEO_BYTES } from './video';
 import 'server-only';
 import sharp from 'sharp';
 import { adminClient } from '@/lib/supabase/server';
@@ -67,7 +70,7 @@ export async function signedImport(ctx: Context, row: Parameters<typeof importIm
   );
   return { ...row, images, url: images[0].url };
 }
-export async function uploadImport(ctx: Context, agentId: string, input: File | File[]) {
+export async function uploadImport(ctx: Context, agentId: string, input: File | File[], replaceId?: string) {
   const files = Array.isArray(input) ? input : [input];
   if (!files.length || files.length > MAX_IMPORT_IMAGES)
     throw new AppError('Selecione de 1 a 6 imagens por postagem.');
@@ -98,6 +101,13 @@ export async function uploadImport(ctx: Context, agentId: string, input: File | 
   // Validate every slide before creating files or the import record.
   const prepared = [];
   for (const [index, file] of files.entries()) {
+    if (file.type === 'video/mp4' || file.name.toLowerCase().endsWith('.mp4')) {
+      if (files.length !== 1) throw new AppError('Selecione apenas um vídeo, sem imagens.');
+      if (file.size > MAX_IMPORT_VIDEO_BYTES) throw new AppError('file_too_large', 413);
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      prepared.push({ bytes, ext: 'mp4', mime_type: 'video/mp4' as const, ...mp4Dimensions(bytes) });
+      continue;
+    }
     const rawType = (file.type || '').toLowerCase();
     const declaredMime =
       rawType === 'image/jpg' || rawType === 'image/pjpeg' ? 'image/jpeg' : rawType;
@@ -127,9 +137,11 @@ export async function uploadImport(ctx: Context, agentId: string, input: File | 
       height: swapped ? metadata.width : metadata.height,
     });
   }
-  const id = crypto.randomUUID();
+  const previous = replaceId ? await importRecord(ctx, replaceId) : null;
+  if (previous && (previous.content_id || previous.agent_id !== agentId || previous.mime_type !== 'video/mp4' || prepared.length !== 1 || prepared[0].mime_type !== 'video/mp4')) throw new AppError('import_images_locked',409);
+  const id = replaceId || crypto.randomUUID();
   const images = prepared.map((image, position) => ({
-    storage_path: `workspace/${ctx.workspaceId}/imports/${id}/${position === 0 ? 'original' : `slide-${position + 1}`}.${image.ext}`,
+    storage_path: `workspace/${ctx.workspaceId}/imports/${id}/${position === 0 ? (replaceId ? 'original-' + crypto.randomUUID() : 'original') : `slide-${position + 1}`}.${image.ext}`,
     mime_type: image.mime_type,
     width: image.width,
     height: image.height,
@@ -153,14 +165,9 @@ export async function uploadImport(ctx: Context, agentId: string, input: File | 
   try {
     for (const [position, image] of images.entries()) {
       attemptedPaths.push(image.storage_path);
-      checked(
-        await storage.upload(image.storage_path, prepared[position].bytes, {
-          contentType: image.mime_type,
-          upsert: false,
-        }),
-      );
+      await uploadAccountFile({ workspaceId:ctx.workspaceId, userId:ctx.user.id, path:image.storage_path, bytes:prepared[position].bytes, contentType:image.mime_type });
     }
-    const row = await db
+    const row = previous ? await db.rpc('replace_import_video', { w:ctx.workspaceId, u:ctx.user.id, i:id, expected:previous.storage_path, media:images[0] }) : await db
       .from('content_imports')
       .insert({
         id,
@@ -182,6 +189,10 @@ export async function uploadImport(ctx: Context, agentId: string, input: File | 
       });
     }
 
+    if (previous) {
+      const removed = await storage.remove(importImages(previous).map(m=>m.storage_path));
+      if (removed.error) console.error('replaced_import_cleanup_pending', { importId:id });
+    }
     return row.data;
   } catch (error) {
     if (process.env.NODE_ENV !== 'production' || process.env.DEBUG) {
@@ -215,7 +226,7 @@ export async function importConnection(
   const connector = connectors[connection.channel as Channel];
   const caps = connector?.capabilities();
   if (
-    connection.metadata?.connected_via === 'demo' ||
+    String(connection.metadata?.connected_via || '').startsWith('demo') ||
     !caps ||
     !(action === 'publish' ? caps.canPublish : caps.canSchedule)
   )
@@ -240,6 +251,9 @@ export async function finalizeImport(
     if (!input.connection_id) throw new AppError('official_integration_required', 409);
     const connection = await importConnection(ctx, row.agent_id, input.connection_id, input.action);
     channel = connection.channel as Channel;
+    const caps = connectionCapabilities(channel, connection.metadata);
+    const allowed = row.mime_type === 'video/mp4' ? caps.videoDestinations || [] : caps.supportedDestinations;
+    if (!allowed.includes(input.destination || 'feed')) throw new AppError('unsupported_capability', 409);
   }
   if (!input.caption.trim() || input.caption.length > channels[channel].limit)
     throw new AppError(
@@ -261,7 +275,7 @@ export async function finalizeImport(
     }),
   );
 
-  if (input.destination) {
+  if (input.destination || input.connection_id) {
     const existing = await db
       .from('content_items')
       .select('strategy')
@@ -275,6 +289,7 @@ export async function finalizeImport(
         strategy: {
           ...strat,
           destination: input.destination,
+          connection_id: input.connection_id,
         },
       })
       .eq('id', contentId)

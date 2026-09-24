@@ -52,11 +52,11 @@ beforeEach(() => {
     agent_schedules: schedule,
   };
 });
-it('accepts valid scheduled occurrence and manual generation with routine inactive', async () => {
-  await expect(assertJobEligible(job)).resolves.toEqual({ runId: undefined });
+it('rejects scheduled generation and accepts explicit manual generation with routine inactive', async () => {
+  await expect(assertJobEligible(job)).rejects.toThrow('job_not_eligible');
   state.rows.agents = { id: 'agent', active: false };
   await expect(
-    assertJobEligible({ ...job, payload: { agent_id: 'agent', origin: 'manual' } }),
+    assertJobEligible({ ...job, payload: { agent_id: 'agent', origin: 'manual', dispatch_mode: 'user_request' } }),
   ).resolves.toEqual({ runId: undefined });
 });
 it.each(['disabled', 'changed', 'missing', 'archived', 'imported', 'deleted', 'lease'])(

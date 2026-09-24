@@ -14,6 +14,7 @@ export type ImportPreviewRecord = {
   width: number;
   height: number;
   images?: ImportPreviewImage[];
+  mime_type?: string;
 };
 
 export function ImportPreview({
@@ -38,7 +39,7 @@ export function ImportPreview({
           {channel ? <SocialLogo channel={channel} /> : null}
           <strong>{title}</strong>
         </header>
-        {current ? (
+        {current?.mime_type === 'video/mp4' ? <video src={current.url} controls preload="metadata" width={current.width} height={current.height} style={{ width: '100%', height: 'auto', aspectRatio: `${current.width}/${current.height}`, objectFit: 'contain' }} /> : current ? (
           <img
             src={current.url}
             alt="Imagem original importada"
@@ -49,7 +50,7 @@ export function ImportPreview({
         ) : (
           <div className={styles.placeholder}>
             <Upload />
-            <p>Envie uma imagem para visualizar</p>
+            <p>Envie imagens ou um vídeo para visualizar</p>
           </div>
         )}
         <p className={styles.caption}>{caption || 'Sua legenda aparecerá aqui.'}</p>

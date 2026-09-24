@@ -181,7 +181,7 @@ export function ContentExecutionCard({
         onClick={() => sessionStorage.setItem('content-scroll', String(window.scrollY))}
       >
         {media?.url ? (
-          <img src={media.url} alt={item.topic} loading="lazy" />
+          media.storage_path.endsWith('.mp4') ? <video src={media.url} preload="metadata" muted style={{objectFit:'contain'}} /> : <img src={media.url} alt={item.topic} loading="lazy" />
         ) : (
           <div className="execution-cover-placeholder">
             <ImageIcon size={28} />

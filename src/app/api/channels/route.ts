@@ -1,3 +1,5 @@
+import { connectionCapabilities } from '@/lib/social/connection-capabilities';
+import type { Channel } from '@/lib/domain';
 import { z } from 'zod';
 import { channelSchema, channels } from '@/lib/domain';
 import { guard, checked, fail, AppError } from '@/lib/security/context';
@@ -12,7 +14,7 @@ export async function GET(request: Request) {
     const rows = checked(
       await adminClient()
         .from('social_connections')
-        .select('id,agent_id,channel,account_name,external_id,created_at')
+        .select('id,agent_id,channel,account_name,external_id,created_at,metadata')
         .eq('workspace_id', ctx.workspaceId)
         .filter(agentId ? 'agent_id' : 'workspace_id', 'eq', agentId || ctx.workspaceId),
     );
@@ -27,7 +29,7 @@ export async function GET(request: Request) {
         : { connected: false };
     }
     return Response.json(
-      { connections: agentId ? connections : {}, items: rows },
+      { connections: agentId ? connections : {}, items: rows?.map(({metadata,...r}) => ({...r,capabilities:connectionCapabilities(r.channel as Channel,metadata)})) },
       { headers: { 'Cache-Control': 'private, no-store' } },
     );
   } catch (e) {

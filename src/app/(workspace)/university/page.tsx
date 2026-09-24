@@ -2,6 +2,7 @@ import { context } from '@/lib/security/context';
 import { adminClient } from '@/lib/supabase/server';
 import { UniversityView } from '@/features/university/view';
 import type { UniversityVideo } from '@/features/university/types';
+import { isSuperAdmin } from '@/lib/security/super-admin';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,12 +19,12 @@ const defaultModelVideo: UniversityVideo = {
 };
 
 export default async function Page() {
-  let canEdit = true;
+  let canEdit = false;
   let videos: UniversityVideo[] = [];
 
   try {
     const ctx = await context();
-    canEdit = ctx.role !== 'VIEWER';
+    canEdit = isSuperAdmin(ctx.user);
 
     // Retrieve videos using admin client so that RLS does not block reading shared training materials
     const db = adminClient();
@@ -41,10 +42,11 @@ export default async function Page() {
         workspace_id: ctx.workspaceId,
         created_by: ctx.user?.id || null,
       };
-      await db.from('university_videos').upsert([seedItem]);
+      if (canEdit && !error) await db.from('university_videos').upsert([seedItem]);
       videos = [seedItem];
     }
   } catch (err) {
+    canEdit = false;
     console.error('Safe fallback in university page:', err);
     videos = [defaultModelVideo];
   }

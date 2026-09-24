@@ -130,13 +130,13 @@ export function AllImports({
         <div aria-busy={busy}>
           {rows.map((row) => (
             <Card key={row.id} className={styles.historyRow}>
-              <img
+              {row.mime_type === 'video/mp4' ? <video src={row.url} width={64} height={84} muted preload="metadata" style={{objectFit:'contain'}} /> : <img
                 src={row.url}
                 alt={row.title || 'Imagem importada'}
                 width={64}
                 height={84}
                 style={{ objectFit: 'contain', flexShrink: 0 }}
-              />
+              />}
               <div style={{ minWidth: 0, flex: 1 }}>
                 <h3>{row.title || 'Importação sem título'}</h3>
                 <p className={styles.excerpt}>{row.caption || 'Sem legenda'}</p>

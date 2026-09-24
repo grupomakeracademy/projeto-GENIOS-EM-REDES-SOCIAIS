@@ -5,6 +5,7 @@ export type AICallContext = {
   source: string;
   reason: string;
   jobId?: string;
+  attempt?: number;
   runId?: string;
   contentId?: string;
   agentId?: string;
@@ -27,8 +28,9 @@ export async function auditAICall(
 ) {
   const current = { ...context.getStore(), ...details };
   const execution = await current.beforeCall?.();
-  console.info('AI_CALL', {
-    timestamp: new Date().toISOString(),
+  const callId = crypto.randomUUID();
+  const attribution = {
+    callId, timestamp: new Date().toISOString(), attempt: current.attempt ?? null,
     provider,
     model,
     type,
@@ -40,5 +42,7 @@ export async function auditAICall(
     runId: execution?.runId || current.runId || null,
     contentId: current.contentId || null,
     agentId: current.agentId || null,
-  });
+  };
+  console.info('AI_CALL', attribution);
+  return (status: string, tokens?: { input?: number; output?: number }) => console.info('AI_CALL_RESULT', { ...attribution, finishedAt: new Date().toISOString(), status, tokens });
 }

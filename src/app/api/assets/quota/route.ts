@@ -1,3 +1,4 @@
+import { accountStorage } from '@/lib/account-storage';
 import { z } from 'zod';
 import { guard, fail, AppError, checked } from '@/lib/security/context';
 import { adminClient } from '@/lib/supabase/server';
@@ -8,21 +9,7 @@ export async function GET(request: Request) {
     const ctx = await guard(request, 'read');
     const isSuper = isSuperAdmin(ctx.user);
 
-    // Current user's assets
-    const { data: userAssets } = await ctx.db
-      .from('assets')
-      .select('size')
-      .eq('created_by', ctx.user.id);
-    const usedBytes = (userAssets || []).reduce((acc, a) => acc + (a.size || 0), 0);
-
-    const { data: profile } = await ctx.db
-      .from('profiles')
-      .select('storage_quota_mb')
-      .eq('id', ctx.user.id)
-      .maybeSingle();
-
-    const quotaMB = isSuper ? -1 : (profile?.storage_quota_mb ?? 100);
-    const isUnlimited = isSuper || quotaMB === -1 || quotaMB === null;
+    const {usedBytes,quotaMB,isUnlimited,availableBytes,reservedBytes} = await accountStorage(ctx.user);
 
     let users: Array<{
       id: string;
@@ -34,14 +21,14 @@ export async function GET(request: Request) {
       role: string;
     }> = [];
 
-    if (isSuper) {
+    if (isSuper && new URL(request.url).searchParams.get('summary') !== '1') {
       try {
         const db = adminClient();
         const [authRes, profilesRes, membersRes, assetsRes] = await Promise.all([
           db.auth.admin.listUsers({ perPage: 1000 }),
           db.from('profiles').select('id,name,storage_quota_mb'),
           db.from('workspace_members').select('user_id,role'),
-          db.from('assets').select('created_by,size'),
+          db.from('account_storage_usage').select('created_by,size'),
         ]);
 
         const authUsers = authRes.data?.users || [];
@@ -62,7 +49,7 @@ export async function GET(request: Request) {
         const userMap = new Map<string, any>();
         for (const u of authUsers) {
           const p = profileMap.get(u.id);
-          const q = p?.storage_quota_mb ?? 100;
+          const q = p?.storage_quota_mb === null ? -1 : (p?.storage_quota_mb ?? 2048);
           const displayName = p?.name || (u.user_metadata as Record<string, string>)?.full_name || u.email?.split('@')[0] || 'Usuário';
           const role = roleMap.get(u.id) || (u.email?.toLowerCase() === 'r.barros84@gmail.com' ? 'ADMIN' : 'MEMBER');
           userMap.set(u.id, {
@@ -77,7 +64,7 @@ export async function GET(request: Request) {
         }
         for (const p of profiles) {
           if (!userMap.has(p.id)) {
-            const q = p?.storage_quota_mb ?? 100;
+            const q = p?.storage_quota_mb === null ? -1 : (p?.storage_quota_mb ?? 2048);
             userMap.set(p.id, {
               id: p.id,
               name: p.name || 'Usuário',
@@ -103,6 +90,8 @@ export async function GET(request: Request) {
     return Response.json({
       usedBytes,
       quotaMB,
+      availableBytes,
+      reservedBytes,
       isUnlimited,
       users: isSuper ? users : [],
       isSuperAdmin: isSuper,

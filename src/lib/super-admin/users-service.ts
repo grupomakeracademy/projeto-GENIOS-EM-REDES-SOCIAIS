@@ -11,7 +11,7 @@ export async function getAdminUsersList(): Promise<AdminUserDetail[]> {
     db.auth.admin.listUsers({ perPage: 1000 }),
     db.from('profiles').select('id,name,storage_quota_mb,content_quota_balance,content_quota_total_assigned,content_quota_total_consumed,onboarding_draft,created_at'),
     db.from('workspace_members').select('user_id,role'),
-    db.from('assets').select('created_by,size'),
+    db.from('account_storage_usage').select('created_by,size'),
     db.from('background_jobs').select('id,type,status,payload,scheduled_at'),
     db.from('content_items').select('id,created_by,created_at'),
     db.from('audit_logs').select('id,workspace_id,actor,event,metadata,created_at').order('created_at', { ascending: false }),
@@ -113,7 +113,7 @@ export async function getAdminUsersList(): Promise<AdminUserDetail[]> {
   for (const u of authUsers) {
     seenIds.add(u.id);
     const p = profileMap.get(u.id);
-    const q = p?.storage_quota_mb ?? 100;
+    const q = p?.storage_quota_mb === null ? -1 : (p?.storage_quota_mb ?? 2048);
     const isSuper = u.email?.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
 
     let status: UserStatus = 'active';
@@ -164,7 +164,7 @@ export async function getAdminUsersList(): Promise<AdminUserDetail[]> {
   for (const p of profiles) {
     if (!seenIds.has(p.id)) {
       seenIds.add(p.id);
-      const q = p.storage_quota_mb ?? 100;
+      const q = p.storage_quota_mb === null ? -1 : (p.storage_quota_mb ?? 2048);
       initMetrics(p.id);
 
       userDetails.push({

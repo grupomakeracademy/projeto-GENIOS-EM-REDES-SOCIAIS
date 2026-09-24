@@ -1,3 +1,4 @@
+import { videoFixture } from './fixtures/mp4';
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import sharp from 'sharp';
 vi.mock('server-only', () => ({}));
@@ -80,7 +81,7 @@ beforeEach(() => {
     content_id: null,
   };
   state.text.mockReset().mockResolvedValue({ caption: 'Legenda aprimorada' });
-  state.rpc.mockReset();
+  state.rpc.mockReset().mockResolvedValue({data:'reservation',error:null});
   state.foreign = false;
   state.connection = null;
 });
@@ -322,4 +323,26 @@ describe('Mandatory Audit Scenarios (1 to 6 images, limits, formats)', () => {
     expect(result.width).toBe(320);
     expect(result.height).toBe(480);
   });
+});
+
+it('accepts a single original MP4 and enforces the 500 MB boundary before reading oversized data',async()=>{
+ const bytes=videoFixture();
+ const file=new File([new Uint8Array(bytes)],'clip.mp4',{type:'video/mp4'});
+ const result=await uploadImport(ctx,'agent',file);
+ expect(result.mime_type).toBe('video/mp4');expect(result.width).toBe(1080);expect(result.height).toBe(1920);
+ expect(Buffer.from(state.stored!)).toEqual(bytes);
+ // Size-only test doubles exercise the boundary without allocating 500 MB.
+ Object.defineProperty(file,'size',{value:500*1024*1024,configurable:true});
+ await expect(uploadImport(ctx,'agent',file)).resolves.toBeTruthy();
+ Object.defineProperty(file,'size',{value:500*1024*1024+1});
+ await expect(uploadImport(ctx,'agent',file)).rejects.toThrow('file_too_large');
+ await expect(uploadImport(ctx,'agent',[new File([bytes],'clip.mp4',{type:'video/mp4'}),new File([bytes],'clip2.mp4',{type:'video/mp4'})])).rejects.toThrow('apenas um vídeo');
+});
+it('rejects unsupported video destinations on the server before creating content',async()=>{
+ state.row={...state.row,mime_type:'video/mp4'};
+ state.connection={channel:'facebook',metadata:{connected_via:'meta_oauth_official'}};
+ await expect(finalizeImport(ctx,'draft',{caption:'Video caption',channel:'facebook',action:'publish',connection_id:'account',destination:'feed'})).rejects.toThrow('unsupported_capability');
+ expect(state.rpc).not.toHaveBeenCalled();
+ state.connection={channel:'instagram',metadata:{connected_via:'meta_oauth_official',account_type:'MEDIA_CREATOR'}};
+ await expect(finalizeImport(ctx,'draft',{caption:'Video caption',channel:'instagram',action:'schedule',connection_id:'account',destination:'stories',scheduled_at:'2099-01-01T12:00:00Z'})).rejects.toThrow('unsupported_capability');
 });

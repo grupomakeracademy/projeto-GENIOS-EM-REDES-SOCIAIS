@@ -1,3 +1,4 @@
+import { workspaceNetworks } from '@/lib/applicable-networks';
 import { contentList } from '@/features/content/queries';
 import { context, checked } from '@/lib/security/context';
 import { ContentList } from '@/features/content/list';
@@ -19,6 +20,7 @@ export default async function Page({
   return (
     <ContentList
       {...result}
+      availableNetworks={await workspaceNetworks(ctx)}
       agents={checked(agents) as Agent[]}
       canEdit={ctx.role !== 'VIEWER'}
       defaultImageQuality={defaultImageQuality}

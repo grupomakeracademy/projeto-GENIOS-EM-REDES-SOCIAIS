@@ -4,6 +4,8 @@ import { adminClient } from '@/lib/supabase/server';
 import { channels, channelSchema, type Channel, destinationSchema } from '@/lib/domain';
 import { requireAgent } from '@/lib/security/agent';
 import { publishVariantContent } from '@/lib/social/publisher';
+import { dispatchRequestedJob } from '@/lib/jobs/lifecycle';
+export const maxDuration = 900;
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const ctx = await guard(request),
@@ -126,6 +128,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         actor_id: ctx.user.id,
       });
       if (queued.error) throw new AppError('conflict', 409);
+      dispatchRequestedJob(queued.data, ctx.workspaceId, ctx.user.id);
       return Response.json({ ok: true }, { status: 202 });
     }
     const payload: Record<string, unknown> = {};

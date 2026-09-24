@@ -36,7 +36,7 @@ export async function apiJSON(
     assertModelAllowed(purpose, model);
   }
 
-  await auditAICall(provider,url,model,method === 'GET' ? 'model_validation' : new URL(url).pathname, audit);
+  const finishAudit = await auditAICall(provider,url,model,method === 'GET' ? 'model_validation' : new URL(url).pathname, audit);
   let response: Response;
   try {
     response = await fetch(url, {
@@ -54,15 +54,24 @@ export async function apiJSON(
       redirect: 'error',
     });
   } catch {
+    finishAudit?.('timeout');
     throw new Error('timeout');
   }
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     const error = providerHttpError(provider, new URL(url).pathname, response.status, body);
+    finishAudit?.(error.message);
     console.error('[AI Provider] Request rejected', error.diagnostic);
     throw error;
   }
-  return response.json() as Promise<unknown>;
+  try {
+    const result = await response.json();
+    finishAudit?.('completed', { input: result.usage?.prompt_tokens ?? result.usage?.input_tokens ?? result.usageMetadata?.promptTokenCount, output: result.usage?.completion_tokens ?? result.usage?.output_tokens ?? result.usageMetadata?.candidatesTokenCount });
+    return result as unknown;
+  } catch {
+    finishAudit?.('invalid_output');
+    throw new Error('invalid_output');
+  }
 }
 const textResponse = z.object({
   choices: z.array(

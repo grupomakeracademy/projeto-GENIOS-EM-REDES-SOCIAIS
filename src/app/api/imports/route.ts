@@ -45,7 +45,7 @@ export async function GET(request: Request) {
 }
 export async function POST(request: Request) {
   try {
-    const ctx = await guard(request, 'write', 64 * 1024 * 1024),
+    const ctx = await guard(request, 'write', 501 * 1024 * 1024),
       form = await request.formData();
     const files = form.getAll('file');
     if (!files.length || files.some((file) => !(file instanceof File))) {
@@ -56,7 +56,7 @@ export async function POST(request: Request) {
     if (!parsedAgent.success) {
       throw new AppError('invalid_input', 400);
     }
-    const row = await uploadImport(ctx, parsedAgent.data, files as File[]);
+    const row = await uploadImport(ctx, parsedAgent.data, files as File[], form.get('replace_id') ? z.uuid().parse(form.get('replace_id')) : undefined);
     return Response.json(row, { status: 201 });
   } catch (e) {
     return fail(e);

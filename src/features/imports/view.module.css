@@ -97,3 +97,6 @@
   -webkit-box-orient: vertical;
   overflow-wrap: anywhere;
 }
+
+.preview :global(.preview-frame) { background:var(--surface); color:var(--ink); }
+.preview :global(.preview-frame) header, .preview :global(.preview-frame) p { color:var(--ink); }

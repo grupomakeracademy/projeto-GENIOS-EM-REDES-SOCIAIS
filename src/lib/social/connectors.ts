@@ -8,6 +8,7 @@ export type Capabilities = {
   canPublishFeed: boolean;
   canPublishStories: boolean;
   supportedDestinations: Destination[];
+  videoDestinations?: Destination[];
   reason: string;
 };
 
@@ -18,6 +19,7 @@ export interface SocialAnalyticsProvider {
 export interface PublishPayload {
   caption: string;
   mediaUrls: string[];
+  mediaType?: 'image' | 'video';
   channel: Channel;
   accountName?: string;
   token?: string;
@@ -70,6 +72,7 @@ export class InstagramConnector implements SocialConnector {
       canPublishFeed: true,
       canPublishStories: true,
       supportedDestinations: ['feed', 'stories', 'feed_and_stories'],
+      videoDestinations: ['feed', 'stories', 'feed_and_stories'],
       reason: 'operational',
     };
   }
@@ -110,6 +113,32 @@ export class InstagramConnector implements SocialConnector {
       };
     }
 
+    if (payload.mediaType === 'video') {
+      if (mediaUrls.length !== 1) throw new Error('unsupported_capability');
+      const targets = destination === 'feed_and_stories' ? ['feed', 'stories'] : [destination];
+      const published: string[] = [];
+      for (const target of targets) {
+        const base = 'https://graph.facebook.com/' + (process.env.META_GRAPH_VERSION || 'v25.0');
+        const call = async (path: string, body?: Record<string, unknown>) => {
+          const response = await fetch(base + '/' + path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, access_token: token }) } : { headers: { Authorization: 'Bearer ' + token } });
+          const data = await response.json();
+          if (!response.ok || data.error) throw new Error('video_publication_failed');
+          return data;
+        };
+        const container = await call(externalId + '/media', { video_url: mediaUrls[0], media_type: target === 'stories' ? 'STORIES' : 'REELS', ...(target === 'feed' ? {caption, share_to_feed: true} : {}) });
+        let complete = false;
+        for (let attempt = 0; attempt < 30; attempt++) {
+          const state = await call(container.id + '?fields=status_code');
+          if (state.status_code === 'FINISHED') { complete = true; break; }
+          if (['ERROR','EXPIRED'].includes(state.status_code)) throw new Error('video_processing_failed');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        if (!complete) throw new Error('video_processing_timeout');
+        const post = await call(externalId + '/media_publish', { creation_id: container.id });
+        published.push(post.id);
+      }
+      return { success: true, externalPostId: published.join(','), publishedAt: new Date().toISOString() };
+    }
     // Fluxo oficial da Meta Graph API para Instagram Business
     try {
       if (destination === 'stories') {

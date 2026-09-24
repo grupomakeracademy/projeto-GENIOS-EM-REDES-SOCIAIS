@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Sparkles,
   Users,
@@ -46,6 +46,7 @@ export function ContentFormModal({
   onGenerated?: () => void;
 }) {
   const action = useAction();
+  const submission = useRef({ busy: false, key: '' });
   const isEditing = Boolean(draftItem);
 
   const [selected, setSelected] = useState('');
@@ -65,6 +66,7 @@ export function ContentFormModal({
 
   useEffect(() => {
     if (!open) return;
+    submission.current = { busy: false, key: crypto.randomUUID() };
     if (draftItem) {
       const strategy = (draftItem.strategy as Record<string, unknown>) || {};
       const agentId = draftItem.agent_id || agents[0]?.id || '';
@@ -187,8 +189,9 @@ export function ContentFormModal({
 
   async function handleGenerateSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (action.busy || savingDraft || !selected || selectedChannels.length === 0) return;
+    if (submission.current.busy || action.busy || savingDraft || !selected || selectedChannels.length === 0) return;
     setMagicError('');
+    submission.current.busy = true;
     void action.act(async () => {
       const payload: Record<string, unknown> = {
         agent_id: selected,
@@ -199,7 +202,7 @@ export function ContentFormModal({
         channels: selectedChannels,
         image_count: Number(imageCount),
         image_quality: imageQuality,
-        idempotency_key: crypto.randomUUID(),
+        idempotency_key: submission.current.key,
       };
 
       if (isEditing && draftItem) {
@@ -209,7 +212,7 @@ export function ContentFormModal({
       await api('runs', 'POST', payload);
       onClose();
       onGenerated?.();
-    }, 'enqueued');
+    }, 'enqueued').finally(() => { submission.current.busy = false; });
   }
 
   if (!open) return null;

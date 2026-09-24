@@ -1,3 +1,4 @@
+import { accountStorage } from '@/lib/account-storage';
 import { context, checked } from '@/lib/security/context';
 import { Library } from '@/features/library/view';
 import type { Asset } from '@/lib/domain';
@@ -46,12 +47,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ p
     }),
   );
 
-  const [userAssetsResult, profileResult] = await Promise.all([
-    ctx.db.from('assets').select('size').eq('created_by', ctx.user.id),
-    ctx.db.from('profiles').select('storage_quota_mb').eq('id', ctx.user.id).maybeSingle(),
-  ]);
-  const userUsedBytes = (userAssetsResult.data || []).reduce((acc, a) => acc + (a.size || 0), 0);
-  const userQuotaMB = isSuper ? -1 : (profileResult.data?.storage_quota_mb ?? 100);
+  const {usedBytes:userUsedBytes,quotaMB:userQuotaMB} = await accountStorage(ctx.user);
 
   return (
     <Library

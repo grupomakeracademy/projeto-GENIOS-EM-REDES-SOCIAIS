@@ -22,6 +22,7 @@ import {
 import { Brand, Copyright, useT, api, Modal, Empty } from './ui';
 import { ThemeToggle } from './theme-toggle';
 import { QuotaBadge } from './quota-badge';
+import { StorageBadge } from './storage-badge';
 const navigation = [
   ['dashboard', LayoutDashboard],
   ['contents', SquareCheck],
@@ -123,6 +124,7 @@ export function Shell({
             <Search size={19} />
             <input aria-label={t('search')} name="q" placeholder={t('search')} minLength={2} />
           </form>
+          <StorageBadge />
           <QuotaBadge />
           <ThemeToggle />
           <button

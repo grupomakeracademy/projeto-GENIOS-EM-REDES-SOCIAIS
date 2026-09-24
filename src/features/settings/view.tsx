@@ -75,7 +75,7 @@ export function SettingsView({
     [quotaUsers, setQuotaUsers] = useState<SettingsQuotaUser[]>(initialQuotaUsers),
     [selectedUserId, setSelectedUserId] = useState<string>(initialQuotaUsers[0]?.id || ''),
     [userQuotaEdit, setUserQuotaEdit] = useState<{ value: number; unlimited: boolean }>({
-      value: initialQuotaUsers[0]?.quotaMB === -1 ? 100 : (initialQuotaUsers[0]?.quotaMB ?? 100),
+      value: initialQuotaUsers[0]?.quotaMB === -1 ? 2048 : (initialQuotaUsers[0]?.quotaMB ?? 2048),
       unlimited: initialQuotaUsers[0]?.isUnlimited ?? false,
     }),
     [savingQuota, setSavingQuota] = useState(false),
@@ -89,7 +89,7 @@ export function SettingsView({
     [adminUsers, setAdminUsers] = useState<AdminUserDetail[]>(initialAdminUsers),
     [userSearch, setUserSearch] = useState(''),
     [selectedUserForQuota, setSelectedUserForQuota] = useState<AdminUserDetail | null>(null),
-    [quotaModalValue, setQuotaModalValue] = useState<number>(100),
+    [quotaModalValue, setQuotaModalValue] = useState<number>(2048),
     [quotaModalUnlimited, setQuotaModalUnlimited] = useState<boolean>(false),
     [quotaModalReason, setQuotaModalReason] = useState<string>(''),
     [savingQuotaModal, setSavingQuotaModal] = useState<boolean>(false),
@@ -125,7 +125,7 @@ export function SettingsView({
     const u = quotaUsers.find((x) => x.id === id);
     if (u) {
       setUserQuotaEdit({
-        value: u.quotaMB === -1 ? 100 : u.quotaMB,
+        value: u.quotaMB === -1 ? 2048 : u.quotaMB,
         unlimited: u.isUnlimited,
       });
     }
@@ -156,7 +156,7 @@ export function SettingsView({
 
   const handleOpenQuotaModal = (u: AdminUserDetail) => {
     setSelectedUserForQuota(u);
-    setQuotaModalValue(u.storage_quota_mb === -1 ? 100 : u.storage_quota_mb);
+    setQuotaModalValue(u.storage_quota_mb === -1 ? 2048 : u.storage_quota_mb);
     setQuotaModalUnlimited(u.is_unlimited);
     setQuotaModalReason('');
   };
@@ -702,7 +702,7 @@ export function SettingsView({
                 </div>
                 <div>
                   <h2 style={{ fontSize: '18px', fontWeight: 700, margin: 0, color: '#0f172a' }}>
-                    Gestão de Armazenamento da Biblioteca
+                    Gestão de Armazenamento total da conta
                   </h2>
                   <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#64748b' }}>
                     Área restrita do Super Admin: libere mais espaço selecionando o usuário cadastrado individualmente.
@@ -826,7 +826,7 @@ export function SettingsView({
                             <span style={{ fontSize: '13px', color: '#64748b', fontWeight: 600 }}>MB</span>
                           </div>
                           <span style={{ fontSize: '11px', color: '#94a3b8', marginTop: 4, display: 'block' }}>
-                            Padrão do sistema: 100 MB
+                            Novas contas: 2 GB (2048 MB), compartilhados entre Biblioteca, Conteúdos e Importar
                           </span>
                         </Field>
                       </div>
@@ -1620,7 +1620,7 @@ export function SettingsView({
                       display: 'block',
                     }}
                   >
-                    Padrão do sistema: 100 MB
+                    Novas contas: 2 GB (2048 MB) de armazenamento total
                   </span>
                 </Field>
               </div>

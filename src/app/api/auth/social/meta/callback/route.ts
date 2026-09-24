@@ -40,6 +40,7 @@ export async function GET(request: Request) {
     let accountName = `@empresa_${channel}`;
     let externalId = `178414000${Math.floor(Math.random() * 1000000)}`;
     let tokenCiphertext = 'demo_connected';
+    let accountType: string | undefined;
 
     // 1. Fluxo de Simulação / Demonstração
     if (simulated === '1' || code === 'simulated' || !code) {
@@ -97,7 +98,7 @@ export async function GET(request: Request) {
         id: string;
         name: string;
         access_token: string;
-        instagram_business_account?: { id: string; username: string; name: string };
+        instagram_business_account?: { id: string; username: string; name: string; account_type?: string };
       };
       const rawPages: Array<{ id: string; name: string; access_token: string }> = [];
       const pages: PageItem[] = [];
@@ -150,10 +151,10 @@ export async function GET(request: Request) {
           for (const igId of igIdSet) {
             try {
               const igRes = await fetch(
-                `https://graph.facebook.com/v19.0/${igId}?fields=id,username,name&access_token=${encodeURIComponent(userToken)}`,
+                `https://graph.facebook.com/v19.0/${igId}?fields=id,username,name,account_type&access_token=${encodeURIComponent(userToken)}`,
               );
               if (igRes.ok) {
-                const igJson = (await igRes.json()) as { id: string; username: string; name: string };
+                const igJson = (await igRes.json()) as { id: string; username: string; name: string; account_type?: string };
                 const matchedPage =
                   rawPages.find((p) => p.name.toLowerCase().includes(igJson.name?.toLowerCase())) ||
                   rawPages[0];
@@ -164,6 +165,7 @@ export async function GET(request: Request) {
                   instagram_business_account: {
                     id: igJson.id,
                     username: igJson.username,
+                    account_type: igJson.account_type,
                     name: igJson.name,
                   },
                 });
@@ -267,14 +269,14 @@ export async function GET(request: Request) {
       // 5. Enriquecer cada página com o Instagram Business Account vinculado se ainda não estiver em pages
       for (const p of rawPages) {
         if (!pages.some((page) => page.id === p.id)) {
-          let igAccount: { id: string; username: string; name: string } | undefined;
+          let igAccount: { id: string; username: string; name: string; account_type?: string } | undefined;
         try {
           const igRes = await fetch(
-            `https://graph.facebook.com/v19.0/${p.id}?fields=instagram_business_account{id,username,name}&access_token=${encodeURIComponent(p.access_token || userToken)}`,
+            `https://graph.facebook.com/v19.0/${p.id}?fields=instagram_business_account{id,username,name,account_type}&access_token=${encodeURIComponent(p.access_token || userToken)}`,
           );
           if (igRes.ok) {
             const igJson = (await igRes.json()) as {
-              instagram_business_account?: { id: string; username: string; name: string };
+              instagram_business_account?: { id: string; username: string; name: string; account_type?: string };
             };
             igAccount = igJson.instagram_business_account;
           }
@@ -330,6 +332,7 @@ export async function GET(request: Request) {
         }
         accountName = `@${pageWithIg.instagram_business_account.username}`;
         externalId = pageWithIg.instagram_business_account.id;
+        accountType = pageWithIg.instagram_business_account.account_type;
         const rawToken = pageWithIg.access_token || userToken;
         try {
           tokenCiphertext = encrypt(rawToken, workspaceId);
@@ -365,6 +368,7 @@ export async function GET(request: Request) {
           metadata: {
             connected_via: simulated === '1' ? 'demo_oauth' : 'meta_oauth_official',
             connected_at: new Date().toISOString(),
+            account_type: accountType,
           },
           created_at: new Date().toISOString(),
         },

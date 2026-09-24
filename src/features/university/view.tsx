@@ -25,7 +25,7 @@ export function UniversityView({
   const paramEdit = searchParams.get('edit');
 
   const [mode, setMode] = useState<'list' | 'watch' | 'new' | 'edit'>(
-    paramNew ? 'new' : paramEdit ? 'edit' : paramVideo ? 'watch' : 'list',
+    canEdit && paramNew ? 'new' : canEdit && paramEdit ? 'edit' : paramVideo ? 'watch' : 'list',
   );
   const [selectedId, setSelectedId] = useState<string | null>(
     paramVideo || paramEdit || (initialVideos[0]?.id ?? null),
@@ -45,6 +45,7 @@ export function UniversityView({
   }
 
   function goToNew() {
+    if (!canEdit) return;
     setMode('new');
     router.replace('/university?new=1');
   }
@@ -56,6 +57,7 @@ export function UniversityView({
   }
 
   function goToEdit(video: UniversityVideo) {
+    if (!canEdit) return;
     setSelectedId(video.id);
     setMode('edit');
     router.replace(`/university?edit=${video.id}`);
@@ -79,6 +81,7 @@ export function UniversityView({
   }
 
   async function handleDelete(id: string) {
+    if (!canEdit) return;
     const res = await fetch('/api/university', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
@@ -103,7 +106,7 @@ export function UniversityView({
     goToWatch(savedVideo);
   }
 
-  if (mode === 'new') {
+  if (canEdit && mode === 'new') {
     return (
       <UniversityForm
         onBack={goToList}
@@ -112,7 +115,7 @@ export function UniversityView({
     );
   }
 
-  if (mode === 'edit' && selectedVideo) {
+  if (canEdit && mode === 'edit' && selectedVideo) {
     return (
       <UniversityForm
         video={selectedVideo}

@@ -1,7 +1,6 @@
 import 'server-only';
 import { adminClient } from '@/lib/supabase/server';
 import { checked } from '@/lib/security/context';
-import { backoff, nextOccurrence } from './scheduling';
 import { jobSchema, runPipeline, regenerate, renewLease } from './pipeline';
 import { ProviderError } from '@/lib/ai/provider-error';
 import { withAICallContext } from '@/lib/ai/audit';
@@ -11,6 +10,8 @@ import { publishVariantContent } from '@/lib/social/publisher';
 export async function tick() {
   const db = adminClient(),
     now = new Date();
+  // Terminal housekeeping only. Expiry never schedules or executes AI.
+  checked(await db.rpc('expire_generation_jobs'));
 
   // Processar conteúdos agendados que atingiram o horário de publicação
   const dueItems = checked(
@@ -43,44 +44,19 @@ export async function tick() {
     }
   }
 
-  const schedules = checked(
-    await db
-      .from('agent_schedules')
-      .select('*,agents!inner(active)')
-      .eq('enabled', true)
-      .eq('agents.active', true)
-      .lte('next_run_at', now.toISOString())
-      .limit(50),
-  );
-  for (const schedule of schedules || []) {
-    const key = `${schedule.agent_id}:${schedule.next_run_at}`;
-    checked(
-      await db.from('background_jobs').upsert(
-        {
-          workspace_id: schedule.workspace_id,
-          type: 'agent_run',
-          payload: { agent_id: schedule.agent_id, origin: 'routine', schedule_id: schedule.id, scheduled_for: schedule.next_run_at, schedule_fingerprint: JSON.stringify([schedule.local_time,schedule.weekdays,schedule.timezone]) },
-          idempotency_key: key,
-        },
-        { onConflict: 'idempotency_key', ignoreDuplicates: true },
-      ),
-    );
-    const next = nextOccurrence(schedule.local_time, schedule.weekdays, schedule.timezone, now);
-    checked(
-      await db
-        .from('agent_schedules')
-        .update({ next_run_at: next.toISOString() })
-        .eq('id', schedule.id)
-        .eq('next_run_at', schedule.next_run_at),
-    );
-  }
-  const claimed = checked(await db.rpc('claim_job'));
+  return { processed: false };
+}
+
+/** Process only the job dispatched by a validated user request. */
+export async function processRequestedJob(id: string, workspaceId: string, actorId: string) {
+  const db = adminClient();
+  const claimed = checked(await db.rpc('claim_requested_job', { j: id, w: workspaceId, actor_id: actorId }));
   if (!claimed?.length) return { processed: false };
   const job = jobSchema.parse(claimed[0]);
   try {
     await assertJobEligible(job);
     await withAICallContext({
-      trigger:job.attempts>1?'retry':job.payload.origin==='routine'?'scheduled_routine':'user_action',
+      trigger:job.attempts>1?'retry':'user_action', attempt:job.attempts,
       source:'src/lib/jobs/pipeline.ts',reason:job.type,jobId:job.id,
       contentId:String(job.payload.content_id || job.id),agentId:String(job.payload.agent_id || ''),
       beforeCall:()=>assertJobEligible(job),
@@ -134,9 +110,6 @@ export async function tick() {
     const code =
       error instanceof Error && safe.includes(error.message) ? error.message : 'internal_error';
     if (code === 'lease_lost') return { processed: false, id: job.id, status: 'LEASE_LOST' };
-    const retry =
-      ['timeout', 'provider_unavailable', 'rate_limit', 'invalid_output'].includes(code) &&
-      job.attempts < job.max_attempts;
     if (error instanceof ProviderError) {
       const run = checked(await db.from('agent_runs').select('checkpoint').eq('job_id', job.id).maybeSingle());
       if (run) checked(await db.from('agent_runs').update({
@@ -147,8 +120,8 @@ export async function tick() {
       await db
         .from('background_jobs')
         .update({
-          status: retry ? 'PENDING' : 'FAILED',
-          scheduled_at: new Date(Date.now() + backoff(job.attempts) * 1000).toISOString(),
+          status: 'FAILED',
+          completed_at: new Date().toISOString(),
           last_error: code,
           lease_until: null,
         })
@@ -158,10 +131,10 @@ export async function tick() {
     checked(
       await db
         .from('agent_runs')
-        .update({ status: retry ? 'RETRYING' : 'FAILED', error_code: code })
+        .update({ status: 'FAILED', error_code: code, completed_at: new Date().toISOString() })
         .eq('job_id', job.id),
     );
-    if (!retry) {
+    {
       const id = String(job.payload.content_id || job.id);
       if (job.type === 'regenerate_image' || job.type === 'regenerate_copy') {
         // Critical requirement: Regeneration failure must NEVER invalidate the original valid content into 'FAILED'.
@@ -202,6 +175,6 @@ export async function tick() {
         );
       }
     }
-    return { processed: true, id: job.id, status: retry ? 'RETRYING' : 'FAILED', error: code };
+    return { processed: true, id: job.id, status: 'FAILED', error: code };
   }
 }

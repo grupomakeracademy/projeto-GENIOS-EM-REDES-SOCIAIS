@@ -1,4 +1,6 @@
 'use client';
+import { NetworkFilter } from '@/components/network-filter';
+import { parseNetworks } from '@/lib/network-filter';
 import './content.css';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, useEffect, useRef, useCallback, useSyncExternalStore, useTransition } from 'react';
@@ -312,6 +314,7 @@ export function ContentList({
   page,
   agents,
   canEdit,
+  availableNetworks,
   defaultImageQuality = 'low',
 }: {
   items: Content[];
@@ -319,6 +322,7 @@ export function ContentList({
   page: number;
   agents: Agent[];
   canEdit: boolean;
+  availableNetworks: Channel[];
   defaultImageQuality?: 'low' | 'medium';
 }) {
   const t = useT(),
@@ -330,7 +334,7 @@ export function ContentList({
   function openCreateModal() {
     setCreateOpen(true);
   }
-  const network = params.get('network') || '';
+  const network = parseNetworks(params.get('network'));
   const [revision, setRevision] = useState(0);
   const [filterPending, startFilterTransition] = useTransition();
   const savedView = useSyncExternalStore(
@@ -347,7 +351,7 @@ export function ContentList({
       (!params.get('from') || Date.parse(r.scheduledAt) >= Date.parse(params.get('from')!)) &&
       (!params.get('to') || Date.parse(r.scheduledAt) < Date.parse(params.get('to')!)) &&
       (!params.get('agent') || r.agentId === params.get('agent')) &&
-      (!network || !r.channels.length || r.channels.includes(network)) &&
+      (!network.length || r.channels.some(c => network.includes(c as Channel))) &&
       (!params.get('status') ||
         params
           .get('status')!
@@ -357,7 +361,7 @@ export function ContentList({
   const displayItems = items.filter(
     (i) =>
       !visibleRuns.some((r) => (r.contentId || r.id) === i.id) &&
-      (!network || i.content_variants.some((v) => v.channel === network)),
+      (!network.length || i.content_variants.some((v) => network.includes(v.channel))),
   );
   const renderRun = (run: (typeof queue.runs)[number]) => (
     <RunCard
@@ -432,18 +436,7 @@ export function ContentList({
         aria-label="Opções de visualização"
       >
         <AgentFilter agents={agents} value={params.get('agent') || ''} onChange={id => filter('agent',id)}/>
-        <select
-          aria-label={t('allChannels')}
-          value={network}
-          onChange={(e) => filter('network', e.target.value)}
-        >
-          <option value="">{t('allChannels')}</option>
-          {Object.entries(channels).map(([key, c]) => (
-            <option value={key} key={key}>
-              {c.name}
-            </option>
-          ))}
-        </select>
+        <NetworkFilter available={availableNetworks} />
         <select
           aria-label={t('sortNewestFirst')}
           value={params.get('sort') || 'desc'}

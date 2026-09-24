@@ -267,7 +267,7 @@ export function ContentDetail({
           >
             <X />
           </button>
-          <img src={media.url} alt={variant.title} />
+          {media.storage_path.endsWith('.mp4') ? <video src={media.url} controls style={{width:'100%',height:'auto'}} /> : <img src={media.url} alt={variant.title} />}
         </dialog>
       )}
       {isDraft && (
@@ -697,7 +697,7 @@ export function ContentDetail({
                   <span className="avatar">{company.slice(0, 2).toUpperCase()}</span>
                   <strong>{company}</strong>
                 </header>
-                {media?.url ? (
+                {media?.url && media.storage_path.endsWith('.mp4') ? <video src={media.url} controls preload="metadata" style={{width:'100%',height:'auto',objectFit:'contain'}} /> : media?.url ? (
                   <img
                     src={media.url}
                     alt={variant.title}

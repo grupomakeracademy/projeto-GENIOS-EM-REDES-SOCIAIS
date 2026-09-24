@@ -1,6 +1,5 @@
+import { uploadAccountFile } from '@/lib/account-storage';
 import 'server-only';
-import { adminClient } from '@/lib/supabase/server';
-import { checked } from '@/lib/security/context';
 import { applyExactAssets } from '@/lib/ai/asset-knowledge';
 import type { Agent } from '@/lib/domain';
 
@@ -13,10 +12,9 @@ export async function saveCompositedImage(params: {
   const finalBytes = await applyExactAssets({ imageBuffer: params.bytes, agent: params.agent,
     ratio: params.ratio, channel: params.channel, expectedLogo: params.expectedLogo });
   if (params.expectedLogo && Buffer.from(params.bytes).equals(finalBytes)) throw new Error('internal_error');
-  const storage = adminClient().storage.from('brand-assets');
-  checked(await storage.upload(params.originalPath, params.bytes, { contentType: params.mime, upsert: true }));
+  await uploadAccountFile({workspaceId: params.originalPath.split('/')[1], path:params.originalPath,bytes:params.bytes,contentType:params.mime,upsert:true});
   console.log('[Image Persistence]', { providerRawImageSaved: true });
-  checked(await storage.upload(params.finalPath, finalBytes, { contentType: params.expectedLogo ? 'image/png' : params.mime, upsert: true }));
+  await uploadAccountFile({workspaceId: params.finalPath.split('/')[1],path:params.finalPath,bytes:finalBytes,contentType:params.expectedLogo ? 'image/png' : params.mime,upsert:true});
   console.log('[Image Persistence]', { finalImageSavedAfterComposition: true, exactAssetApplied: params.expectedLogo,
     finalDisplaySource: params.finalPath });
   return params.finalPath;

@@ -1,3 +1,4 @@
+import { parseNetworks } from '@/lib/network-filter';
 import 'server-only';
 import { context, checked } from '@/lib/security/context';
 import { channels, statuses, type Content } from '@/lib/domain';
@@ -5,12 +6,13 @@ import { requireAgent } from '@/lib/security/agent';
 import { executionResponsibles } from './responsibles';
 export async function contentList(params: Record<string, string | undefined> = {}) {
   const ctx = await context();
+  const networks = parseNetworks(params.network);
   await requireAgent(ctx, params.agent);
   const page = Math.max(1, Math.min(10000, Number(params.page) || 1));
   let query = ctx.db
     .from('content_items')
     .select(
-      params.network && params.network in channels
+      networks.length
         ? '*,content_variants!inner(*,content_media(*))'
         : '*,content_variants(*,content_media(*))',
       { count: 'exact' },
@@ -20,8 +22,8 @@ export async function contentList(params: Record<string, string | undefined> = {
     .split(',')
     .filter((s) => statuses.includes(s as (typeof statuses)[number]));
   if (selectedStatuses.length) query = query.in('status', selectedStatuses);
-  if (params.network && params.network in channels)
-    query = query.eq('content_variants.channel', params.network);
+  if (networks.length)
+    query = query.in('content_variants.channel', networks);
   if (params.agent && /^[0-9a-f-]{36}$/i.test(params.agent))
     query = query.eq('agent_id', params.agent);
   if (params.q) query = query.ilike('topic', `%${params.q.replace(/[%_\\]/g, '').slice(0, 160)}%`);

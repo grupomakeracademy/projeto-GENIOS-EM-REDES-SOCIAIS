@@ -60,18 +60,7 @@ export async function assertJobEligible(job: Job) {
       .maybeSingle(),
   );
   if (!agent) throw new Error('job_not_eligible');
-  if (job.payload.origin === 'routine') {
-    const schedule = checked(
-      await db
-        .from('agent_schedules')
-        .select('*')
-        .eq('agent_id', agent.id)
-        .eq('workspace_id', job.workspace_id)
-        .maybeSingle(),
-    );
-    if (!agent.active || !schedule || !routineMatches(job.payload, schedule))
-      throw new Error('job_not_eligible');
-  } else if (job.type === 'agent_run' && job.payload.origin !== 'manual')
+  if (job.payload.origin === 'routine' || job.payload.dispatch_mode !== 'user_request')
     throw new Error('job_not_eligible');
   const contentId = String(job.payload.content_id || job.id);
   const content = checked(

@@ -60,6 +60,7 @@ beforeAll(async () => {
   await db.exec(
     `create role anon; create role authenticated; create role service_role bypassrls; create schema auth; create table auth.users(id uuid primary key,email text); create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$; grant usage on schema auth to authenticated; grant execute on function auth.uid() to authenticated;`,
   );
+  await db.exec("create schema storage; create table storage.buckets(id text primary key,file_size_limit bigint,allowed_mime_types text[]);");
   for (const filename of [
     '202609110001_foundation.sql',
     '202609110002_content.sql',
@@ -78,6 +79,7 @@ beforeAll(async () => {
     '202609150002_caption_import_management.sql',
     '202609150003_import_caption_save.sql',
     '202609150004_import_carousel.sql',
+    '202609240001_import_video_and_events.sql',
   ]) {
     const sql = await readFile(
       new URL(`../supabase/migrations/${filename}`, import.meta.url),
@@ -503,4 +505,22 @@ it('supports protected identities and exact assets with single master reference 
   expect(logoRow.rows[0].category).toBe('exact_asset');
   expect(logoRow.rows[0].asset_subtype).toBe('logo');
   expect(logoRow.rows[0].placement).toBe('top_left');
+});
+
+it('finalizes one MP4 with original dimensions and safely replaces only an unfinalized video',async()=>{
+ const id=randomUUID(), original=`workspace/${wa}/imports/${id}/original.mp4`;
+ await db.query("insert into content_imports(id,workspace_id,agent_id,created_by,storage_path,mime_type,width,height) values($1,$2,$3,$4,$5,'video/mp4',1080,1920)",[id,wa,agentA,A,original]);
+ const media={storage_path:`workspace/${wa}/imports/${id}/replacement.mp4`,mime_type:'video/mp4',width:1920,height:1080};
+ await db.query("select replace_import_video($1,$2,$3,$4,$5)",[wa,A,id,original,JSON.stringify(media)]);
+ await expect(db.query("select replace_import_video($1,$2,$3,$4,$5)",[wa,A,id,original,JSON.stringify(media)])).rejects.toThrow('import_images_locked');
+ const c=(await db.query<{id:string}>("select finalize_content_import($1,$2,$3,'instagram','Video caption') id",[wa,id,A])).rows[0].id;
+ expect((await db.query("select m.storage_path,m.aspect_ratio from content_media m join content_variants v on v.id=m.variant_id where v.content_id=$1",[c])).rows).toEqual([{storage_path:media.storage_path,aspect_ratio:'1920:1080'}]);
+ await expect(db.query("select replace_import_video($1,$2,$3,$4,$5)",[wa,A,id,media.storage_path,JSON.stringify(media)])).rejects.toThrow('import_images_locked');
+ const created=(await db.query<{metadata:{status:string}}>("select metadata from content_events where content_id=$1 and event='CREATED'",[c])).rows[0];
+ expect(created.metadata.status).toBe('APPROVED');
+});
+it('database rejects mixing images and videos in one import',async()=>{
+ const id=randomUUID(),path=`workspace/${wa}/imports/${id}/original.mp4`;
+ const media={storage_path:path,mime_type:'video/mp4',width:1080,height:1920};
+ await expect(db.query("insert into content_imports(id,workspace_id,agent_id,created_by,storage_path,mime_type,width,height,images) values($1,$2,$3,$4,$5,'video/mp4',1080,1920,$6)",[id,wa,agentA,A,path,JSON.stringify([media,{...media,mime_type:'image/png'}])])).rejects.toThrow('invalid_import_image_count');
 });

@@ -25,7 +25,7 @@ vi.mock('@/lib/jobs/pipeline', async () => {
   const {z} = await import('zod');
   return {jobSchema:z.any(),runPipeline:state.run,regenerate:state.regenerate,renewLease:vi.fn().mockResolvedValue(undefined)};
 });
-import {tick} from '@/lib/jobs/worker';
+import {tick, processRequestedJob} from '@/lib/jobs/worker';
 import {assertJobEligible} from '@/lib/jobs/eligibility';
 import {ProviderError} from '@/lib/ai/provider-error';
 beforeEach(() => {
@@ -34,44 +34,44 @@ beforeEach(() => {
 });
 it('seven simulated hours of idle worker polling perform no generation',async()=>{
   state.idle=true;
-  for(let n=0;n<5040;n++) expect(await tick()).toEqual({processed:false});
+  for(let n=0;n<5040;n++) expect(await processRequestedJob(state.job.id,state.job.workspace_id,'actor')).toEqual({processed:false});
   expect(state.run).not.toHaveBeenCalled();
   expect(state.regenerate).not.toHaveBeenCalled();
   expect(state.writes).toEqual([]);
 });
 it('processes a manually queued content', async () => {
-  expect(await tick()).toMatchObject({status:'COMPLETED'});
+  expect(await processRequestedJob(state.job.id,state.job.workspace_id,'actor')).toMatchObject({status:'COMPLETED'});
   expect(state.run).toHaveBeenCalledWith(state.job);
 });
-it('enqueues due routines with an idempotency key and advances their schedule', async () => {
-  state.schedules=[{id:'schedule',workspace_id:state.job.workspace_id,agent_id:'agent',next_run_at:'2026-09-14T11:00:00Z',local_time:'08:00',weekdays:[1,2,3,4,5],timezone:'America/Sao_Paulo'}];
+it('publication ticks never enqueue routines or consume generation jobs',async()=>{
+  state.schedules=[{enabled:true}];
   await tick();
-  expect(state.writes).toContainEqual({table:'background_jobs',value:expect.objectContaining({idempotency_key:'agent:2026-09-14T11:00:00Z',payload:expect.objectContaining({agent_id:'agent',origin:'routine',schedule_id:'schedule',scheduled_for:'2026-09-14T11:00:00Z'})})});
-  expect(state.writes).toContainEqual({table:'agent_schedules',value:{next_run_at:expect.any(String)}});
+  expect(state.run).not.toHaveBeenCalled();
+  expect(state.writes).toEqual([]);
 });
-it('retries incomplete output within a finite budget and retains diagnostics/checkpoints', async () => {
+it('fails incomplete output without automatic retry and retains diagnostics/checkpoints', async () => {
   const diagnostic={provider:'openai',operation:'image',code:'missing_image'};
   state.run.mockRejectedValue(new ProviderError('invalid_output',diagnostic));
-  expect(await tick()).toMatchObject({status:'RETRYING'});
+  expect(await processRequestedJob(state.job.id,state.job.workspace_id,'actor')).toMatchObject({status:'FAILED'});
   expect(state.writes).toContainEqual({table:'agent_runs',value:{checkpoint:{strategy:{topic:'preserve'},provider_error:diagnostic}}});
   state.job.attempts=3;
-  expect(await tick()).toMatchObject({status:'FAILED'});
+  expect(await processRequestedJob(state.job.id,state.job.workspace_id,'actor')).toMatchObject({status:'FAILED'});
 });
 it('does not loop on invalid configuration or unavailable provider balance', async () => {
   state.run.mockRejectedValue(new ProviderError('provider_request_rejected',{provider:'openai',operation:'image',status:400}));
-  expect(await tick()).toMatchObject({status:'FAILED',error:'provider_request_rejected'});
+  expect(await processRequestedJob(state.job.id,state.job.workspace_id,'actor')).toMatchObject({status:'FAILED',error:'provider_request_rejected'});
   state.run.mockRejectedValue(new Error('provider_quota_exceeded'));
-  expect(await tick()).toMatchObject({status:'FAILED',error:'provider_quota_exceeded'});
+  expect(await processRequestedJob(state.job.id,state.job.workspace_id,'actor')).toMatchObject({status:'FAILED',error:'provider_quota_exceeded'});
 });
 it('routes regeneration through the existing regeneration pipeline', async () => {
   state.job.type='regenerate_image';
-  expect(await tick()).toMatchObject({status:'COMPLETED'});
+  expect(await processRequestedJob(state.job.id,state.job.workspace_id,'actor')).toMatchObject({status:'COMPLETED'});
   expect(state.regenerate).toHaveBeenCalledWith(state.job);
   expect(state.run).not.toHaveBeenCalled();
 });
 it('ends an ineligible job without generating or scheduling a retry',async()=>{
   vi.mocked(assertJobEligible).mockRejectedValueOnce(new Error('job_not_eligible'));
-  expect(await tick()).toMatchObject({status:'FAILED',error:'job_not_eligible'});
+  expect(await processRequestedJob(state.job.id,state.job.workspace_id,'actor')).toMatchObject({status:'FAILED',error:'job_not_eligible'});
   expect(state.run).not.toHaveBeenCalled();
   expect(state.regenerate).not.toHaveBeenCalled();
   expect(state.writes).toContainEqual({table:'background_jobs',value:expect.objectContaining({status:'FAILED',last_error:'job_not_eligible'})});
