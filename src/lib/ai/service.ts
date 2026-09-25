@@ -119,6 +119,10 @@ export class AIService {
       images?: number;
     },
   ) {
+    // IMPORTANT: usage logging must NEVER terminate a successful pipeline.
+    // A failure here means we lose audit data, not that the AI call failed.
+    // The AI already responded and consumed tokens — aborting now would force
+    // a retry that repeats expensive AI calls for no reason.
     const { error } = await adminClient()
       .from('usage_events')
       .insert({
@@ -129,6 +133,13 @@ export class AIService {
         operation,
         ...usage,
       });
-    if (error) throw new Error('internal_error');
+    if (error)
+      console.warn('[Usage] Failed to persist usage_event (non-fatal):', {
+        job_id: this.jobId,
+        provider: config.provider,
+        model: config.model,
+        operation,
+        error: error.message,
+      });
   }
 }

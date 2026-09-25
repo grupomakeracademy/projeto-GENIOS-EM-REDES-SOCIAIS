@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ShieldCheck, ArrowRight, Bot, Eye, EyeOff } from 'lucide-react';
 import { Brand, Button, Copyright, Field, Notice, useAction, useT, api } from '@/components/ui';
@@ -9,9 +9,11 @@ const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export function AuthForm({
   configured,
   initialMode,
+  initialError,
 }: {
   configured: boolean;
   initialMode: string;
+  initialError?: string;
 }) {
   const router = useRouter(),
     t = useT(),
@@ -25,6 +27,9 @@ export function AuthForm({
     [showPassword, setShowPassword] = useState(false),
     [showConfirmation, setShowConfirmation] = useState(false),
     [mismatchTouched, setMismatchTouched] = useState(false),
+    [customNotice, setCustomNotice] = useState<{ message: string; error: boolean } | null>(
+      initialError ? { message: initialError, error: true } : null,
+    ),
     action = useAction();
 
   const passwordsMismatch =
@@ -131,6 +136,7 @@ export function AuthForm({
                 key={mode}
                 onSubmit={(event) => {
                   event.preventDefault();
+                  setCustomNotice(null);
                   const form = new FormData(event.currentTarget);
                   if (mode === 'signup' && passwordsMismatch) {
                     setMismatchTouched(true);
@@ -155,11 +161,16 @@ export function AuthForm({
                         router.refresh();
                       }
                       if (mode === 'reset') {
-                        router.push('/settings');
-                        router.refresh();
+                        setMode('login');
                       }
                     },
-                    mode === 'signup' || mode === 'forgot' ? 'emailSent' : 'saved',
+                    mode === 'signup'
+                      ? 'emailSent'
+                      : mode === 'forgot'
+                        ? 'forgotInstructionsSent'
+                        : mode === 'reset'
+                          ? 'password_updated'
+                          : 'saved',
                   );
                 }}
               >
@@ -224,12 +235,22 @@ export function AuthForm({
                   <ArrowRight size={18} />
                 </Button>
               </form>
-              <Notice {...action} />
+              <Notice {...(customNotice || action)} />
               <div className="auth-links">
-                <button onClick={() => setMode(mode === 'signup' ? 'login' : 'signup')}>
-                  {t(mode === 'signup' ? 'login' : 'signup')}
-                </button>
-                <button onClick={() => setMode('forgot')}>{t('forgot')}</button>
+                {mode === 'login' ? (
+                  <>
+                    <button type="button" onClick={() => setMode('signup')}>
+                      {t('signup')}
+                    </button>
+                    <button type="button" onClick={() => setMode('forgot')}>
+                      {t('forgot')}
+                    </button>
+                  </>
+                ) : (
+                  <button type="button" onClick={() => setMode('login')}>
+                    {t('login')}
+                  </button>
+                )}
               </div>
             </>
           )}

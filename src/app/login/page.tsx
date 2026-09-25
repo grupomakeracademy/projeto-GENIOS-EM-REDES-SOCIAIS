@@ -1,9 +1,17 @@
 import { configured } from '@/lib/supabase/server';
 import { AuthForm } from '@/features/auth/form';
+
 export default async function Login({
   searchParams,
 }: {
-  searchParams: Promise<{ mode?: string }>;
+  searchParams: Promise<{ mode?: string; error?: string }>;
 }) {
-  return <AuthForm configured={configured()} initialMode={(await searchParams).mode || 'login'} />;
+  const params = await searchParams;
+  return (
+    <AuthForm
+      configured={configured()}
+      initialMode={params.mode || 'login'}
+      initialError={params.error}
+    />
+  );
 }

@@ -10,4 +10,5 @@ test-results/
 task.md
 .agents/
 debug.log
+*.log
 scratch/

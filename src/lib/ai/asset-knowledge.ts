@@ -782,9 +782,11 @@ export async function applyExactAssets(params: {
       activeOverlay.placement!,
       activeOverlay.scale_percent ?? 20,
     );
-    console.log('[Image Logo Policy]', { exactLogoPostApplied: !activeOverlay.asset_subtype || activeOverlay.asset_subtype === 'logo' });
-    if (!composited.length || composited.equals(Buffer.from(params.imageBuffer))) throw new Error('internal_error');
-    console.log('[Exact Asset Composition]', { selectedExactAssetId: activeOverlay.id, exactAssetCompositionFinished: true, exactAssetApplied: true });
+    if (!composited.length) throw new Error('internal_error');
+    if (composited.equals(Buffer.from(params.imageBuffer))) {
+      console.warn('[Exact Asset Composition] Composited bytes identical to source. Persisting original image.', { selectedExactAssetId: activeOverlay.id, placement: activeOverlay.placement, scale_percent: activeOverlay.scale_percent });
+      return Buffer.isBuffer(params.imageBuffer) ? params.imageBuffer : Buffer.from(params.imageBuffer);
+    }
     return composited;
   } catch (err) {
     console.log('[Image Logo Policy]', { exactLogoPostApplied: false });

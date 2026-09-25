@@ -176,13 +176,33 @@ export async function saveImage(
   );
   await renewLease(job);
 
-  // Apply exact assets (e.g. pristine official logo) post-generation
-  // Preserve the authentic original image directly from the AI model
+  // Apply exact assets (e.g. pristine official logo) post-generation and persist both
+  // the raw original and the final composited image.
+  // saveCompositedImage now returns { displayPath, isComposited, fallbackReason? }:
+  //   - If the composited upload succeeds, displayPath = finalPath.
+  //   - If the composited upload fails due to storage quota, displayPath = originalPath (fallback).
+  // Either way, we immediately register the result in content_media so that:
+  //   1. The image is visible to the frontend even if subsequent pipeline steps fail.
+  //   2. A retry sees an existing content_media record and skips the AI call entirely.
   const originalPath = `workspace/${job.workspace_id}/content/${job.id}/${variant.id}-${position}-original.png`;
-  // Also save the display path pointing to the final composited image bytes
-  const path = await saveCompositedImage({ agent, bytes: result.bytes, mime: result.mime || 'image/png', ratio, channel: variant.channel,
+  const compositeResult = await saveCompositedImage({
+    agent, bytes: result.bytes, mime: result.mime || 'image/png', ratio, channel: variant.channel,
     expectedLogo: exactLogoPolicy.hasExactLogoAsset, originalPath,
-    finalPath: `workspace/${job.workspace_id}/content/${job.id}/${variant.id}-${position}-${job.lock_token}-final.png` });
+    finalPath: `workspace/${job.workspace_id}/content/${job.id}/${variant.id}-${position}-${job.lock_token}-final.png`,
+  });
+
+  if (compositeResult.fallbackReason) {
+    console.warn('[Image Checkpoint] Using original image as fallback in content_media.', {
+      variant_id: variant.id, position,
+      displayPath: compositeResult.displayPath,
+      fallbackReason: compositeResult.fallbackReason,
+    });
+  } else {
+    console.log('[Image Checkpoint] Composited image registered in content_media.', {
+      variant_id: variant.id, position, displayPath: compositeResult.displayPath,
+    });
+  }
+
   checked(
     await db.from('content_media').upsert(
       {
@@ -190,7 +210,7 @@ export async function saveImage(
         variant_id: variant.id,
         position,
         version: 1,
-        storage_path: path,
+        storage_path: compositeResult.displayPath,
         aspect_ratio: ratio,
         prompt,
         provider: result.provider,
@@ -760,7 +780,7 @@ export async function regenerate(job: Job) {
 
     // 6. Upload new version files without overwriting previous versions
     const originalPath = `workspace/${job.workspace_id}/content/${content_id}/${variant.id}-${position}-v${nextVersion}-original.png`;
-    const path = await saveCompositedImage({ agent, bytes: result.bytes, mime: result.mime || 'image/png', ratio, channel: variant.channel,
+    const compositeResult = await saveCompositedImage({ agent, bytes: result.bytes, mime: result.mime || 'image/png', ratio, channel: variant.channel,
       expectedLogo: exactLogoPolicy.hasExactLogoAsset, originalPath,
       finalPath: `workspace/${job.workspace_id}/content/${content_id}/${variant.id}-${position}-v${nextVersion}-${job.lock_token}-final.png` });
 
@@ -771,7 +791,7 @@ export async function regenerate(job: Job) {
         variant_id: variant.id,
         position,
         version: nextVersion,
-        storage_path: path,
+        storage_path: compositeResult.displayPath,
         aspect_ratio: ratio,
         prompt,
         provider: result.provider,

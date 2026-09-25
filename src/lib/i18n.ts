@@ -136,6 +136,21 @@ const messages = {
     'Check your email to continue.',
     'Revisa tu correo para continuar.',
   ],
+  forgotInstructionsSent: [
+    'Se este e-mail estiver cadastrado, as instruções de recuperação foram enviadas. Confira sua caixa de entrada e spam.',
+    'If this email is registered, recovery instructions have been sent. Check your inbox and spam folder.',
+    'Si este correo está registrado, se han enviado las instrucciones de recuperación. Revisa tu bandeja de entrada y spam.',
+  ],
+  recovery_link_expired: [
+    'O link de recuperação expirou ou já foi utilizado. Solicite um novo link de recuperação.',
+    'The recovery link has expired or has already been used. Please request a new recovery link.',
+    'El enlace de recuperación ha caducado o ya ha sido utilizado. Solicita un nuevo enlace de recuperación.',
+  ],
+  password_updated: [
+    'Senha alterada com sucesso! Você já pode entrar com a nova senha.',
+    'Password updated successfully! You can now log in with your new password.',
+    '¡Contraseña actualizada con éxito! Ya puedes iniciar sesión con tu nueva contraseña.',
+  ],
   setupTitle: [
     'Vamos conectar sua plataforma',
     'Let’s connect your platform',
@@ -466,6 +481,21 @@ const messages = {
     'This request origin is invalid. Refresh the page and try again.',
     'El origen de esta solicitud no es válido. Actualiza la página e inténtalo de nuevo.',
   ],
+  invalid_credentials: [
+    'E-mail ou senha incorretos.',
+    'Incorrect email or password.',
+    'Correo electrónico o contraseña incorrectos.',
+  ],
+  email_not_confirmed: [
+    'E-mail não confirmado. Verifique sua caixa de entrada.',
+    'Email not confirmed. Please check your inbox.',
+    'Correo no confirmado. Revisa tu bandeja de entrada.',
+  ],
+  user_banned: [
+    'Esta conta está temporariamente suspensa.',
+    'This account is temporarily suspended.',
+    'Esta cuenta está suspendida temporalmente.',
+  ],
   invalid_email: [
     'Informe um endereço de e-mail válido.',
     'Enter a valid email address.',
@@ -485,6 +515,11 @@ const messages = {
     'Não foi possível concluir. Tente novamente.',
     'Unable to complete. Try again.',
     'No se pudo completar. Inténtalo de nuevo.',
+  ],
+  storage_quota_exceeded: [
+    'Armazenamento da conta esgotado. Libere espaço ou atualize seu plano.',
+    'Account storage is full. Free up space or upgrade your plan.',
+    'Almacenamiento de la cuenta lleno. Libere espacio o actualice su plan.',
   ],
   database_error: [
     'Não foi possível acessar os dados.',

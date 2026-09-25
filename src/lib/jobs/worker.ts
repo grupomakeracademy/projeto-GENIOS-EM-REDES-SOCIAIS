@@ -88,6 +88,18 @@ export async function processRequestedJob(id: string, workspaceId: string, actor
       return { processed: false, id: job.id, status: 'LEASE_LOST' };
     }
     console.error(`[Worker] Job ${job.id} (${job.type}) failed:`, error);
+    // Always log the full technical root cause — the frontend only receives the sanitised 'code'.
+    // This ensures that when code === 'internal_error', the real error message is never silently lost.
+    if (error instanceof Error) {
+      console.error('[Worker] Root cause:', {
+        job_id: job.id,
+        type: job.type,
+        attempt: job.attempts,
+        message: error.message,
+        // Only include the first 8 lines of the stack to keep logs readable
+        stack: error.stack?.split('\n').slice(0, 8).join('\n'),
+      });
+    }
     const safe = [
       'provider_missing',
       'research_not_configured',
@@ -106,6 +118,7 @@ export async function processRequestedJob(id: string, workspaceId: string, actor
       'lease_lost',
       'insufficient_quota',
       'job_not_eligible',
+      'storage_quota_exceeded',
     ];
     const code =
       error instanceof Error && safe.includes(error.message) ? error.message : 'internal_error';

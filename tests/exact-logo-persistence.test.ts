@@ -42,10 +42,10 @@ it('resolves only the explicitly linked logo even when shared from another works
 });
 it.each(['manual','routine','regeneration'])('composes and persists the shared %s image stage at bottom_left / 35%%', async flow => {
   const raw = await sharp({ create: { width: 1000, height: 1500, channels: 3, background: 'white' } }).png().toBuffer();
-  const path = await saveCompositedImage({ agent, bytes: raw, mime: 'image/png', channel: 'instagram', ratio: '4:5', expectedLogo: true,
+  const res = await saveCompositedImage({ agent, bytes: raw, mime: 'image/png', channel: 'instagram', ratio: '4:5', expectedLogo: true,
     originalPath: `${flow}-original.png`, finalPath: `${flow}-final.png` });
   expect(s.files.get(`${flow}-original.png`)).toEqual(raw);
-  const final = s.files.get(mediaDisplaySource(path))!;
+  const final = s.files.get(mediaDisplaySource(res.displayPath))!;
   expect(final.equals(raw)).toBe(false);
   const { data, info } = await sharp(final).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const pixel = (x: number, y: number) => [...data.subarray((y * info.width + x) * 3, (y * info.width + x) * 3 + 3)];

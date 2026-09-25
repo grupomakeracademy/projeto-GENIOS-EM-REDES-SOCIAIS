@@ -23,8 +23,8 @@ export async function uploadAccountFile(params: {
   const db = adminClient();
   const reservation = await db.rpc('reserve_account_storage', { w:params.workspaceId, u:params.userId || null, p:params.path, n:params.bytes.byteLength });
   if (reservation.error) {
-    if (reservation.error.message.includes('storage_quota_exceeded')) throw new AppError('Espaço insuficiente no armazenamento total da conta.',413);
-    throw new AppError('storage_reservation_failed',409);
+    if (reservation.error.message.includes('storage_quota_exceeded')) throw new AppError('storage_quota_exceeded', 413);
+    throw new AppError('storage_reservation_failed', 409);
   }
   try {
     checked(await db.storage.from('brand-assets').upload(params.path,params.bytes,{ contentType:params.contentType, upsert:params.upsert || false }));
