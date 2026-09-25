@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { guard, checked, fail, AppError } from '@/lib/security/context';
 import { adminClient } from '@/lib/supabase/server';
-import { channelSchema } from '@/lib/domain';
+import { channelSchema, destinationSchema } from '@/lib/domain';
 import { executionResponsibles } from '@/features/content/responsibles';
 import { requireAgent } from '@/lib/security/agent';
 import { dispatchRequestedJob } from '@/lib/jobs/lifecycle';
@@ -72,6 +72,7 @@ export async function POST(request: Request) {
     const ctx = await guard(request, 'write');
     const input = z
       .object({
+        destination: destinationSchema.optional(),
         content_id: z.uuid().optional(),
         agent_id: z.uuid(),
         instruction: z.string().max(10000).default(''),
@@ -119,7 +120,7 @@ export async function POST(request: Request) {
 
     const { data: userProfile } = await ctx.db
       .from('profiles')
-      .select('content_quota_balance')
+      .select('content_quota_balance,locale')
       .eq('id', ctx.user.id)
       .maybeSingle();
 
@@ -135,7 +136,7 @@ export async function POST(request: Request) {
     const db = adminClient();
     const queued = await db.rpc('enqueue_manual_generation', {
       w: ctx.workspaceId, a: input.agent_id, actor_id: ctx.user.id,
-      p: input, k: `${ctx.workspaceId}:manual:${input.idempotency_key}`, c: input.content_id || null,
+      p: { ...input, title_language: userProfile?.locale || 'pt-BR' }, k: `${ctx.workspaceId}:manual:${input.idempotency_key}`, c: input.content_id || null,
     });
     if (queued.error || !queued.data) throw new AppError('conflict', 409);
     const job = checked(await db.from('background_jobs').select('id,status').eq('id', queued.data).single());

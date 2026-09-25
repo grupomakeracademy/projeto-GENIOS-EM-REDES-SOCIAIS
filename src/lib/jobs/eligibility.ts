@@ -60,8 +60,16 @@ export async function assertJobEligible(job: Job) {
       .maybeSingle(),
   );
   if (!agent) throw new Error('job_not_eligible');
-  if (job.payload.origin === 'routine' || job.payload.dispatch_mode !== 'user_request')
-    throw new Error('job_not_eligible');
+  if (job.payload.origin === 'routine') {
+    const schedule = checked(await db.from('agent_schedules')
+      .select('id,enabled,local_time,timezone,weekdays,requested_by')
+      .eq('id', String(job.payload.schedule_id || ''))
+      .eq('agent_id', String(job.payload.agent_id || ''))
+      .eq('workspace_id', job.workspace_id).maybeSingle());
+    if (!agent.active || job.payload.dispatch_mode !== 'scheduled_request' || !schedule ||
+      schedule.requested_by !== job.payload.created_by || !routineMatches(job.payload, schedule))
+      throw new Error('job_not_eligible');
+  } else if (job.payload.dispatch_mode !== 'user_request') throw new Error('job_not_eligible');
   const contentId = String(job.payload.content_id || job.id);
   const content = checked(
     await db

@@ -8,7 +8,7 @@ it('sends reference images through the image edit endpoint as multipart data', a
     .fn()
     .mockResolvedValue(new Response(JSON.stringify({ data: [{ b64_json: 'aW1hZ2U=' }] })));
   vi.stubGlobal('fetch', fetcher);
-  await generateImage(
+  const image = await generateImage(
     { provider: 'openai', purpose: 'image', model: 'gpt-image-2.5-sunburst' },
     'test-key',
     'Brand scene',
@@ -19,6 +19,7 @@ it('sends reference images through the image edit endpoint as multipart data', a
   const request = fetcher.mock.calls[0][1];
   expect(request.body).toBeInstanceOf(FormData);
   expect(request.body.get('size')).toBe('1024x1024');
+  expect(image.generationPrompt).toBe(request.body.get('prompt'));
   expect(request.body.getAll('image[]')).toHaveLength(1);
   expect(request.headers).not.toHaveProperty('Content-Type');
 });

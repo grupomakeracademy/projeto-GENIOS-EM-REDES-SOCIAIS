@@ -34,11 +34,11 @@ Requisitos: Node.js 20 ou superior e um projeto Supabase.
 3. Defina a `SUPABASE_SERVICE_ROLE_KEY` apenas no ambiente de servidor.
 4. Gere `CREDENTIAL_MASTER_KEY` com 32 bytes aleatórios em Base64 e um `WORKER_SECRET` longo e aleatório.
 5. Aplique, em ordem, os arquivos de `supabase/migrations` no banco.
-6. Instale as dependências e inicie a aplicação:
+6. Use Node 22.14+ ou 24 LTS e pnpm 11.19.0 (versão registrada em `packageManager`). Instale as dependências e inicie a aplicação:
 
 ```bash
-npm ci
-npm run dev
+pnpm install --frozen-lockfile
+pnpm dev
 ```
 
 Abra `http://127.0.0.1:3001`. Após o cadastro, conclua o onboarding e configure ao menos uma credencial de IA em **Configurações**.
@@ -127,3 +127,22 @@ Os testes unitários cobrem regras de domínio, provedores, segurança e horári
 Implante o Next.js em um runtime Node.js compatível com Next 16 e `sharp`, mantendo todas as variáveis de servidor fora do bundle público. Defina `APP_ORIGIN` para a URL HTTPS final, habilite confirmação de e-mail conforme a política do produto, configure o callback do Supabase e mantenha o worker em um processo ou agendamento separado.
 
 Antes de liberar o ambiente, revise a validade das chaves administrativas, ative observabilidade para jobs e erros de provedor e execute o smoke test em um projeto de homologação.
+
+## Portabilidade e validação
+
+O lockfile oficial é pnpm-lock.yaml. Não copie node_modules ou .next entre computadores.
+Em um clone limpo, configure .env.local a partir de .env.example e aplique as migrations pendentes com Supabase CLI (supabase db push). Segredos ficam no ambiente local/servidor.
+
+```bash
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm build
+pnpm test
+pnpm exec playwright install chromium
+pnpm exec playwright test --list
+pnpm test:e2e tests/e2e/routine-portability.spec.ts
+```
+
+O E2E de rotina usa um usuário/workspace temporário no Supabase configurado. Sem RUN_LIVE_ROUTINE_TEST, valida interface, persistência e payload sem chamadas de IA. Com RUN_LIVE_ROUTINE_TEST=1, faz geração real e agenda uma ocorrência dois minutos à frente; isso consome API e exige servidor Node ativo e credenciais de IA válidas. O teste desativa a rotina temporária ao encerrar.
+
+Rotinas salvas explicitamente por um usuário autorizado são verificadas pelo runner existente do servidor Node. Cada ocorrência tem chave única e claim atômico; não há retries automáticos. Ocorrências atrasadas mais de cinco minutos são puladas. Rotinas antigas precisam ser salvas novamente para registrar o solicitante. Geração manual continua vinculada à requisição, sem varredura da fila de geração. Em hospedagem que suspende o processo (serverless), este runner não garante horários: use um servidor Node contínuo para executar rotinas.

@@ -116,6 +116,7 @@ export async function POST(request: Request) {
             local_time: input.local_time,
             weekdays: input.weekdays,
             enabled: input.enabled,
+            requested_by: ctx.user.id,
             next_run_at: next.toISOString(),
           },
           { onConflict: 'agent_id' },
@@ -135,10 +136,14 @@ export async function POST(request: Request) {
 
     if (current?.text_settings?.ai_configs !== undefined)
       input.text_settings.ai_configs = current.text_settings.ai_configs;
-    const references = z
-      .array(z.uuid())
-      .max(100)
-      .parse(input.visual_settings.reference_ids || []);
+    const previousReferences = Array.isArray(current?.visual_settings?.reference_ids)
+      ? current.visual_settings.reference_ids as string[] : [];
+    const references = z.array(z.uuid()).parse(input.visual_settings.reference_ids || []);
+    const unchangedReferences = references.length === previousReferences.length &&
+      references.every(ref => previousReferences.includes(ref));
+    // Library associations can exceed the editor's selection limit. Preserve them
+    // when saving unrelated settings; keep the limit for actual reference edits.
+    if (!unchangedReferences) z.array(z.uuid()).max(Math.max(100, previousReferences.length)).parse(references);
     if (references.length) {
       const assetQuery = isSuper
         ? adminClient().from('assets').select('id').in('id', references)

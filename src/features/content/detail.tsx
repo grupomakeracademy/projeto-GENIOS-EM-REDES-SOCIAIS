@@ -76,7 +76,7 @@ export function ContentDetail({
     [caption, setCaption] = useState(
       initial.content_variants[initialIndex >= 0 ? initialIndex : 0]?.caption || '',
     ),
-    [subTab, setSubTab] = useState<'caption' | 'instruction'>(
+    [subTab, setSubTab] = useState<'caption' | 'instruction' | 'image_prompt'>(
       initial.status === 'DRAFT' ? 'instruction' : 'caption',
     ),
     [position, setPosition] = useState(0),
@@ -331,8 +331,12 @@ export function ContentDetail({
             >
               Pauta / instrução
             </button>
+            <button type="button" className={`editor-subtab ${subTab === 'image_prompt' ? 'active' : ''}`} onClick={() => setSubTab('image_prompt')}>Prompt da imagem</button>
           </div>
           {variant ? (
+            subTab === 'image_prompt' ? (
+              <div className="instruction-tab-pane"><label className="field-title">Prompt da imagem — imagem {position + 1}</label>{media?.prompt && !media?.generation_prompt && <p className="muted">Registro histórico: prompt da cena. O texto completo enviado ao provedor não foi armazenado nesta geração.</p>}<pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontFamily: 'inherit' }}>{media?.generation_prompt || media?.prompt || 'Não há prompt registrado para esta imagem.'}</pre></div>
+            ) :
             subTab === 'caption' ? (
               isDraft ? (
                 <div className="draft-caption-empty-notice">

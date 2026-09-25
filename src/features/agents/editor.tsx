@@ -348,7 +348,7 @@ export function AgentEditor({
       : (selected && selected.image_count > 0 ? Math.min(6, selected.image_count) : 1),
   );
   const [routineIsCarousel, setRoutineIsCarousel] = useState<boolean>(
-    Boolean(initialRs.is_carousel),
+    Boolean(initialRs.is_carousel) && Number(initialRs.image_count) > 1,
   );
   const [routineCta, setRoutineCta] = useState<string>(
     (initialRs.cta as string) || '',
@@ -389,7 +389,7 @@ export function AgentEditor({
         ? rs.image_count
         : (selected.image_count > 0 ? Math.min(6, selected.image_count) : 1),
     );
-    setRoutineIsCarousel(Boolean(rs.is_carousel));
+    setRoutineIsCarousel(Boolean(rs.is_carousel) && Number(rs.image_count) > 1);
     setRoutineCta((rs.cta as string) || '');
     setRoutineDestination((rs.destination as Destination) || 'feed');
     setRoutinePautaMagicUsed(false);
@@ -497,9 +497,14 @@ export function AgentEditor({
               action.act(async () => {
                 await api('runs', 'POST', {
                   agent_id: selected.id,
-                  instruction: '',
-                  channels: selected.channels,
-                  image_count: selected.image_count,
+                  instruction: routineInstruction,
+                  channels: routineChannels,
+                  image_count: routineCount,
+                  image_style: routineStyle,
+                  image_quality: routineQuality,
+                  is_carousel: routineCount > 1 && routineIsCarousel,
+                  cta: routineCta,
+                  destination: routineDestination,
                   idempotency_key: crypto.randomUUID(),
                 });
               }, 'enqueued')
@@ -1162,7 +1167,7 @@ export function AgentEditor({
                               type="button"
                               className="stepper-btn"
                               disabled={routineCount <= 1 || !canEdit}
-                              onClick={() => setRoutineCount((prev) => Math.max(1, prev - 1))}
+                              onClick={() => { if (routineCount <= 2) setRoutineIsCarousel(false); setRoutineCount((prev) => Math.max(1, prev - 1)); }}
                               aria-label="Diminuir imagens"
                             >
                               <Minus size={16} />
@@ -1200,7 +1205,7 @@ export function AgentEditor({
                         <div className="carousel-segmented-control">
                           <button
                             type="button"
-                            disabled={!canEdit}
+                            disabled={!canEdit || routineCount <= 1}
                             className={`carousel-pill ${routineIsCarousel ? 'active' : ''}`}
                             onClick={() => setRoutineIsCarousel(true)}
                           >
@@ -1312,7 +1317,7 @@ export function AgentEditor({
                               channels: routineChannels,
                               image_quality: routineQuality,
                               image_count: routineCount,
-                              is_carousel: routineIsCarousel,
+                              is_carousel: routineCount > 1 && routineIsCarousel,
                               cta: routineCta,
                               destination: routineDestination,
                             }

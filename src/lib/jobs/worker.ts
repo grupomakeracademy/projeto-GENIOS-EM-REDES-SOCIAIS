@@ -5,6 +5,7 @@ import { jobSchema, runPipeline, regenerate, renewLease } from './pipeline';
 import { ProviderError } from '@/lib/ai/provider-error';
 import { withAICallContext } from '@/lib/ai/audit';
 import { assertJobEligible } from './eligibility';
+import { nextOccurrence } from './scheduling';
 import { publishVariantContent } from '@/lib/social/publisher';
 
 export async function tick() {
@@ -44,6 +45,20 @@ export async function tick() {
     }
   }
 
+  // Only explicitly authorized, due schedule occurrences may create generation jobs.
+  const schedules = checked(await db.from('agent_schedules').select('*')
+    .eq('enabled', true).not('requested_by', 'is', null).lte('next_run_at', now.toISOString()).limit(20));
+  await Promise.all((schedules || []).map(async schedule => {
+    if (!schedule.requested_by) return;
+    try {
+      const next = nextOccurrence(schedule.local_time, schedule.weekdays, schedule.timezone);
+      const id = checked(await db.rpc('dispatch_schedule', {
+        sid: schedule.id, expected: schedule.next_run_at, next_due: next.toISOString(),
+        fingerprint: JSON.stringify([schedule.local_time, schedule.weekdays, schedule.timezone]),
+      }));
+      if (id) await processRequestedJob(id, schedule.workspace_id, schedule.requested_by);
+    } catch { console.error('[Routine] Occurrence failed', { scheduleId: schedule.id }); }
+  }));
   return { processed: false };
 }
 
@@ -56,7 +71,7 @@ export async function processRequestedJob(id: string, workspaceId: string, actor
   try {
     await assertJobEligible(job);
     await withAICallContext({
-      trigger:job.attempts>1?'retry':'user_action', attempt:job.attempts,
+      trigger:job.payload.origin === 'routine' ? 'scheduled_routine' : job.attempts>1?'retry':'user_action', attempt:job.attempts,
       source:'src/lib/jobs/pipeline.ts',reason:job.type,jobId:job.id,
       contentId:String(job.payload.content_id || job.id),agentId:String(job.payload.agent_id || ''),
       beforeCall:()=>assertJobEligible(job),

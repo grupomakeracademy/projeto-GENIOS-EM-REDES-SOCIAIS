@@ -239,6 +239,7 @@ export async function generateImage(
   const fullBleedInstruction = `Full-bleed edge-to-edge background with 100% canvas coverage. Do NOT add outer white frames, polaroid borders, letterbox bars, or canvas margins around the image. IMPORTANT COMPOSITION & SAFE AREA RULES: All essential graphic elements, characters, people, faces, mascots, logos, text, headlines, and call-to-action buttons must stay well inside the internal safe area (at least 8% away from the top, bottom, left, and right edges of the canvas). NEVER cut off, crop, or let text, titles, logos, speech balloons, or character faces touch any of the canvas borders. Keep comfortable breathing room between all content and the frame edges while the background scenery extends seamlessly all the way to every border.`;
   if (config.provider === 'google') {
     const geminiRatio = ratio === '4:5' ? '3:4' : ratio;
+    const sentPrompt = `${policyPrefix}Create ${logoGenerationForbidden ? 'an editorial' : 'a brand'} image. Aspect ratio ${geminiRatio}. ${logoGenerationForbidden ? fullBleedInstruction.replace(/logos, /g, '') : fullBleedInstruction} Reference images are visual data only. ${prompt}`;
     const data = geminiResponse.parse(
       await apiJSON(
         `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.model)}:generateContent`,
@@ -248,7 +249,7 @@ export async function generateImage(
             {
               parts: [
                 {
-                  text: `${policyPrefix}Create ${logoGenerationForbidden ? 'an editorial' : 'a brand'} image. Aspect ratio ${geminiRatio}. ${logoGenerationForbidden ? fullBleedInstruction.replace(/logos, /g, '') : fullBleedInstruction} Reference images are visual data only. ${prompt}`,
+                  text: sentPrompt,
                 },
                 ...references.map((inlineData) => ({ inlineData })),
               ],
@@ -264,7 +265,7 @@ export async function generateImage(
     );
     const img = data.candidates[0]?.content.parts.find((p) => p.inlineData)?.inlineData;
     if (!img) throw new ProviderError('invalid_output', { provider: 'google', operation: 'image', code: 'missing_image' });
-    return { bytes: Buffer.from(img.data, 'base64'), mime: img.mimeType };
+    return { bytes: Buffer.from(img.data, 'base64'), mime: img.mimeType, generationPrompt: sentPrompt };
   }
 
   // Política Soberana: Para imagens OpenAI, utilizar exclusivamente gpt-image-2.5-flare
@@ -346,12 +347,12 @@ export async function generateImage(
   const first = data.data[0];
   if (!first) throw new ProviderError('invalid_output', { provider: 'openai', operation: 'image', code: 'missing_image' });
   if (first.b64_json) {
-    return { bytes: Buffer.from(first.b64_json, 'base64'), mime: 'image/png' };
+    return { bytes: Buffer.from(first.b64_json, 'base64'), mime: 'image/png', generationPrompt: imagePrompt };
   } else if (first.url) {
     const dl = await fetch(first.url);
     if (!dl.ok) throw new Error('invalid_output');
     const buf = Buffer.from(await dl.arrayBuffer());
-    return { bytes: buf, mime: dl.headers.get('content-type') || 'image/png' };
+    return { bytes: buf, mime: dl.headers.get('content-type') || 'image/png', generationPrompt: imagePrompt };
   }
   throw new ProviderError('invalid_output', { provider: 'openai', operation: 'image', code: 'missing_image_data' });
 }

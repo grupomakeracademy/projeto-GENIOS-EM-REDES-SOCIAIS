@@ -82,13 +82,13 @@ export const routineSettingsSchema = z
   .object({
     image_style: z.string().default('Disney / Pixar'),
     instruction: z.string().default(''),
-    channels: z.array(channelSchema).default(['instagram']),
+    channels: z.array(channelSchema).min(1).max(6).default(['instagram']),
     image_quality: z.enum(['low', 'medium', 'high']).default('low'),
     image_count: z.number().int().min(1).max(6).default(1),
     is_carousel: z.boolean().default(false),
     cta: z.string().default(''),
     destination: destinationSchema.default('feed'),
-  })
+  }).transform(settings => ({ ...settings, is_carousel: settings.image_count > 1 && settings.is_carousel }))
   .default({
     image_style: 'Disney / Pixar',
     instruction: '',
@@ -168,6 +168,7 @@ export type Media = {
   storage_path: string;
   url?: string;
   prompt?: string;
+  generation_prompt?: string | null;
   aspect_ratio?: string;
   provider?: string;
   model?: string;

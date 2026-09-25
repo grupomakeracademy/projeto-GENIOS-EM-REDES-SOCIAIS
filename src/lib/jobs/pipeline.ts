@@ -9,6 +9,7 @@ import {
   channelSchema,
   strategySchema,
   variantsSchema,
+  variantSchema,
   validateVariants,
   fitCaptionToLimit,
   channels,
@@ -213,6 +214,7 @@ export async function saveImage(
         storage_path: compositeResult.displayPath,
         aspect_ratio: ratio,
         prompt,
+        generation_prompt: result.generationPrompt,
         provider: result.provider,
         model: result.model,
       },
@@ -296,12 +298,14 @@ export async function runPipeline(job: Job) {
   const qualityMultiplier = imageQuality === 'medium' || imageQuality === 'high' ? 3 : 1;
   const requiredQuota = count * selected.length * qualityMultiplier;
 
-  if (billingUserId && requiredQuota > 0) {
+  let titleLanguage = String(job.payload.title_language || 'pt-BR');
+  if (billingUserId) {
     const { data: userProfile } = await db
       .from('profiles')
-      .select('content_quota_balance')
+      .select('content_quota_balance,locale')
       .eq('id', billingUserId)
       .maybeSingle();
+    titleLanguage = String(job.payload.title_language || userProfile?.locale || 'pt-BR');
     const currentBalance = userProfile?.content_quota_balance ?? 100;
     if (currentBalance < requiredQuota) {
       console.warn(`[Pipeline] Insufficient quota for user ${billingUserId}: required ${requiredQuota}, current ${currentBalance}`);
@@ -336,13 +340,15 @@ export async function runPipeline(job: Job) {
   );
   if (!cache.context)
     await save('context', {
-      agent,
+      agent: { ...agent, channels: selected },
       editorial_memory: memory,
       instruction,
       image_style: imageStyle,
       is_carousel: isCarousel,
       cta,
       content_language: agent.content_language,
+      title_language: titleLanguage,
+      title_instruction: `Write every topic and title exclusively in ${titleLanguage}.`,
     });
   await stage('RESEARCH');
   if (!cache.sources)
@@ -408,7 +414,10 @@ export async function runPipeline(job: Job) {
   await stage('STRATEGY');
   await stage('CHANNEL_ADAPTATION');
   if (!cache.variants) {
-    const raw = await ai.text('text', variantsSchema, {
+    const selectedVariantsSchema = z.object({ variants: z.array(variantSchema.extend({
+      channel: z.enum(selected as [Channel, ...Channel[]]),
+    })).length(selected.length) });
+    const raw = await ai.text('text', selectedVariantsSchema, {
       context: cache.context,
       strategy,
       channels: selected.map((channel) => ({
@@ -445,7 +454,7 @@ export async function runPipeline(job: Job) {
         is_carousel: input.is_carousel ?? (job.payload as Record<string, unknown>)?.is_carousel ?? false,
         cta: input.cta || (job.payload as Record<string, unknown>)?.cta || strategy.cta || '',
         destination: isRoutine
-          ? ((routineSettings.destination as string) || ((job.payload as Record<string, unknown>)?.destination as string) || 'feed')
+          ? (((job.payload as Record<string, unknown>)?.destination as string) || (routineSettings.destination as string) || 'feed')
           : (((job.payload as Record<string, unknown>)?.destination as string) || ((input as Record<string, unknown>)?.destination as string) || 'feed'),
       },
       variants,
@@ -794,6 +803,7 @@ export async function regenerate(job: Job) {
         storage_path: compositeResult.displayPath,
         aspect_ratio: ratio,
         prompt,
+        generation_prompt: result.generationPrompt,
         provider: result.provider,
         model: result.model,
       }),

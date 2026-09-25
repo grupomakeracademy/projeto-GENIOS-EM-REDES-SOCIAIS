@@ -12,7 +12,7 @@ vi.mock('@/lib/supabase/server', () => ({adminClient: () => ({
   rpc: async () => ({data:state.idle?[]:[state.job],error:null}),
   from: (table:string) => {
     const query: Record<string,unknown> = {};
-    for (const method of ['select','eq','lte','limit','update','insert','upsert']) query[method] = (value:Record<string,unknown>) => {
+    for (const method of ['select','eq','not','lte','limit','update','insert','upsert']) query[method] = (value:Record<string,unknown>) => {
       if (['update','insert','upsert'].includes(method)) state.writes.push({table,value});
       return query;
     };
@@ -43,7 +43,7 @@ it('processes a manually queued content', async () => {
   expect(await processRequestedJob(state.job.id,state.job.workspace_id,'actor')).toMatchObject({status:'COMPLETED'});
   expect(state.run).toHaveBeenCalledWith(state.job);
 });
-it('publication ticks never enqueue routines or consume generation jobs',async()=>{
+it('ticks never generate for legacy schedules without an explicit requester',async()=>{
   state.schedules=[{enabled:true}];
   await tick();
   expect(state.run).not.toHaveBeenCalled();
