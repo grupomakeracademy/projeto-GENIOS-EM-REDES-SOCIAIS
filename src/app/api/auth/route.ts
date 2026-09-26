@@ -211,6 +211,7 @@ export async function POST(request: Request) {
     if (error) {
       const authErrors: Record<string, string> = {
         invalid_credentials: 'invalid_credentials',
+        invalid_grant: 'invalid_credentials',
         email_not_confirmed: 'email_not_confirmed',
         user_banned: 'user_banned',
         email_address_invalid: 'invalid_email',
@@ -219,10 +220,19 @@ export async function POST(request: Request) {
         weak_password: 'weak_password',
         over_email_send_rate_limit: 'rate_limit',
       };
+      let resolvedCode = authErrors[error.code || ''];
+      if (!resolvedCode && error.message) {
+        const msg = error.message.toLowerCase();
+        if (msg.includes('invalid login credentials') || msg.includes('invalid credentials') || msg.includes('invalid_grant')) {
+          resolvedCode = 'invalid_credentials';
+        } else if (msg.includes('email not confirmed')) {
+          resolvedCode = 'email_not_confirmed';
+        }
+      }
       throw new AppError(
         error.status === 429
           ? 'rate_limit'
-          : authErrors[error.code || ''] || 'authentication_error',
+          : resolvedCode || 'authentication_error',
         400,
       );
     }
