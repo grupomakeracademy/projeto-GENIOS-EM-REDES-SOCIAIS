@@ -5,7 +5,7 @@ import { channels, channelSchema, type Channel, destinationSchema } from '@/lib/
 import { requireAgent } from '@/lib/security/agent';
 import { publishVariantContent } from '@/lib/social/publisher';
 import { dispatchRequestedJob } from '@/lib/jobs/lifecycle';
-export const maxDuration = 900;
+export const maxDuration = 300;
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const ctx = await guard(request),

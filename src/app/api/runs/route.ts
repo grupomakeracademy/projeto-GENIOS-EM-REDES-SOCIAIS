@@ -5,7 +5,7 @@ import { channelSchema, destinationSchema } from '@/lib/domain';
 import { executionResponsibles } from '@/features/content/responsibles';
 import { requireAgent } from '@/lib/security/agent';
 import { dispatchRequestedJob } from '@/lib/jobs/lifecycle';
-export const maxDuration = 900;
+export const maxDuration = 300;
 export async function GET(request: Request) {
   try {
     const ctx = await guard(request);
