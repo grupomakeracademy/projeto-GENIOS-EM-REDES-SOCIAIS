@@ -54,6 +54,8 @@ export async function GET(request: Request) {
     // Se as credenciais oficiais da Meta estiverem configuradas, redireciona para a tela de login da Meta
     if (clientId) {
       const scopes = [
+        'public_profile',
+        'email',
         'instagram_basic',
         'instagram_content_publish',
         'pages_show_list',
@@ -66,7 +68,9 @@ export async function GET(request: Request) {
       const reauth = url.searchParams.get('reauth') === '1';
       const authType = reauth ? 'reauthenticate,rerequest' : 'rerequest';
 
-      const metaUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scopes)}&state=${encodeURIComponent(state)}&response_type=code&auth_type=${authType}`;
+      const configId = process.env.META_CONFIG_ID;
+      const permParam = configId ? `&config_id=${encodeURIComponent(configId)}` : `&scope=${encodeURIComponent(scopes)}`;
+      const metaUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}${permParam}&state=${encodeURIComponent(state)}&response_type=code&auth_type=${authType}`;
 
       return Response.redirect(metaUrl);
     }
