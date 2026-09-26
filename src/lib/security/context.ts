@@ -15,14 +15,46 @@ export function requireSameOrigin(request: Request) {
   if (!supplied) throw new AppError('invalid_origin', 403);
   const allowed = new Set<string>();
   try {
-    allowed.add(new URL(request.url).origin);
-    if (process.env.APP_ORIGIN) allowed.add(new URL(process.env.APP_ORIGIN).origin);
+    const origin = new URL(supplied).origin;
+
+    try {
+      allowed.add(new URL(request.url).origin);
+    } catch {}
+
+    if (process.env.APP_ORIGIN) {
+      try {
+        allowed.add(new URL(process.env.APP_ORIGIN).origin);
+      } catch {}
+    }
+
+    if (process.env.VERCEL_URL) {
+      allowed.add(`https://${process.env.VERCEL_URL}`);
+    }
+    if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+      allowed.add(`https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`);
+    }
+
+    const host = request.headers.get('host');
+    if (host) {
+      const proto = (request.headers.get('x-forwarded-proto') || 'https').split(',')[0].trim();
+      allowed.add(`${proto}://${host}`);
+      allowed.add(`https://${host}`);
+      allowed.add(`http://${host}`);
+    }
+
     const forwardedHost = request.headers.get('x-forwarded-host');
     if (forwardedHost) {
-      const forwardedProto = request.headers.get('x-forwarded-proto') || 'https';
-      allowed.add(`${forwardedProto}://${forwardedHost}`);
+      const forwardedProto = (request.headers.get('x-forwarded-proto') || 'https').split(',')[0].trim();
+      forwardedHost.split(',').forEach((h) => {
+        const clean = h.trim();
+        if (clean) {
+          allowed.add(`${forwardedProto}://${clean}`);
+          allowed.add(`https://${clean}`);
+          allowed.add(`http://${clean}`);
+        }
+      });
     }
-    const origin = new URL(supplied).origin;
+
     if (!allowed.has(origin)) throw new AppError('invalid_origin', 403);
     return origin;
   } catch (error) {
