@@ -106,6 +106,19 @@ export function ChannelsView({
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
+    function openInstagramDirectPopup() {
+    const width = 560;
+    const height = 680;
+    const left = window.screen.width / 2 - width / 2;
+    const top = window.screen.height / 2 - height / 2;
+    const url = `/api/auth/social/instagram/authorize?agent=${encodeURIComponent(agentId)}`;
+    window.open(
+      url,
+      'Conectar Instagram',
+      `width=${width},height=${height},top=${top},left=${left},status=no,resizable=yes`,
+    );
+  }
+
   function openOAuthPopup(channel: Channel, reauth = false) {
     const width = 560;
     const height = 680;
