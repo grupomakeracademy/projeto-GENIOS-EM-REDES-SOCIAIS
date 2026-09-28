@@ -1,3 +1,20 @@
+function getAppOrigin(request: Request): string {
+  const forwardedHost = request.headers.get('x-forwarded-host')?.split(',')[0].trim();
+  const host = forwardedHost || request.headers.get('host');
+  const proto = (request.headers.get('x-forwarded-proto') || 'https').split(',')[0].trim();
+
+  if (host && !host.includes('localhost') && !host.includes('127.0.0.1')) {
+    return `${proto}://${host}`;
+  }
+
+  const envOrigin = process.env.APP_ORIGIN;
+  if (envOrigin && !envOrigin.includes('localhost') && !envOrigin.includes('127.0.0.1')) {
+    return envOrigin.replace(/\/$/, '');
+  }
+
+  return 'https://geniosrsocial.grupomakeracademy.com.br';
+}
+
 import { context } from '@/lib/security/context';
 import { adminClient } from '@/lib/supabase/server';
 
@@ -44,14 +61,7 @@ export async function GET(request: Request) {
       process.env.INSTAGRAM_APP_ID ||
       '1755657845653213';
 
-    let appOrigin = process.env.APP_ORIGIN;
-    if (!appOrigin || appOrigin.includes('127.0.0.1')) {
-      const reqUrl = new URL(request.url);
-      appOrigin = reqUrl.origin;
-    }
-    if (appOrigin.includes('127.0.0.1')) {
-      appOrigin = appOrigin.replace('127.0.0.1', 'localhost');
-    }
+    const appOrigin = getAppOrigin(request);
     const redirectUri = `${appOrigin}/api/auth/social/instagram/callback`;
 
     if (clientId) {

@@ -1,3 +1,20 @@
+function getAppOrigin(request: Request): string {
+  const forwardedHost = request.headers.get('x-forwarded-host')?.split(',')[0].trim();
+  const host = forwardedHost || request.headers.get('host');
+  const proto = (request.headers.get('x-forwarded-proto') || 'https').split(',')[0].trim();
+
+  if (host && !host.includes('localhost') && !host.includes('127.0.0.1')) {
+    return `${proto}://${host}`;
+  }
+
+  const envOrigin = process.env.APP_ORIGIN;
+  if (envOrigin && !envOrigin.includes('localhost') && !envOrigin.includes('127.0.0.1')) {
+    return envOrigin.replace(/\/$/, '');
+  }
+
+  return 'https://geniosrsocial.grupomakeracademy.com.br';
+}
+
 import { adminClient } from '@/lib/supabase/server';
 import { checked } from '@/lib/security/context';
 import { encrypt } from '@/lib/security/crypto';
@@ -81,15 +98,8 @@ export async function GET(request: Request) {
       // 2. Fluxo Oficial Meta Graph API
       const clientId = process.env.META_CLIENT_ID || process.env.META_APP_ID;
       const clientSecret = process.env.META_CLIENT_SECRET || process.env.META_APP_SECRET;
-      let appOrigin = process.env.APP_ORIGIN;
-      if (!appOrigin || appOrigin.includes('127.0.0.1')) {
-        const reqUrl = new URL(request.url);
-        appOrigin = reqUrl.origin;
-      }
-      if (appOrigin.includes('127.0.0.1')) {
-        appOrigin = appOrigin.replace('127.0.0.1', 'localhost');
-      }
-      const redirectUri = `${appOrigin}/api/auth/social/meta/callback`;
+      const appOrigin = getAppOrigin(request);
+    const redirectUri = `${appOrigin}/api/auth/social/meta/callback`;
 
       if (!clientId || !clientSecret) {
         return renderHtmlResponse({
