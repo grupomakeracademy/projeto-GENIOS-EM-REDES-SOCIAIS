@@ -1,0 +1,24 @@
+import type { Metadata } from 'next';
+import localFont from 'next/font/local';
+import './site.css';
+import './refinement.css';
+const manrope = localFont({
+  src: '../../../public/fonts/manrope.ttf',
+  weight: '200 800',
+  display: 'swap',
+  variable: '--font-premium',
+});
+export const metadata: Metadata = {
+  title: 'Gênio em Redes Sociais — Conteúdo com a inteligência da sua marca',
+  description:
+    'Uma inteligência especializada no seu negócio. Conecte estratégia, identidade e memória à criação de conteúdo. Conheça o Gênio em Redes Sociais.',
+  openGraph: {
+    title: 'Sua marca tem uma história. Dê inteligência a ela.',
+    description: 'Estratégia, identidade e memória. Juntas, em um Gênio feito para sua empresa.',
+    locale: 'pt_BR',
+    type: 'website',
+  },
+};
+export default function LandingLayout({ children }: { children: React.ReactNode }) {
+  return <div className={manrope.variable}>{children}</div>;
+}
