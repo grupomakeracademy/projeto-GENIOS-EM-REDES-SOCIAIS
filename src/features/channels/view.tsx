@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { Check, Link2, ExternalLink, Unlink, Plus, ShieldCheck } from 'lucide-react';
+import { Check, Link2, ExternalLink, Unlink, Plus, ShieldCheck, RefreshCw } from 'lucide-react';
 import { channels, type Channel } from '@/lib/domain';
 import {
   Button,
