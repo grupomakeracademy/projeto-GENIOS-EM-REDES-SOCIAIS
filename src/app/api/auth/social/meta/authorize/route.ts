@@ -58,6 +58,8 @@ export async function GET(request: Request) {
         'email',
         'instagram_basic',
         'instagram_content_publish',
+        'instagram_manage_comments',
+        'instagram_manage_insights',
         'pages_show_list',
         'pages_read_engagement',
         'pages_manage_posts',
@@ -70,7 +72,14 @@ export async function GET(request: Request) {
 
       const configId = process.env.META_CONFIG_ID;
       const permParam = configId ? `&config_id=${encodeURIComponent(configId)}` : `&scope=${encodeURIComponent(scopes)}`;
-      const metaUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}${permParam}&state=${encodeURIComponent(state)}&response_type=code&auth_type=${authType}`;
+
+      // Facebook Login for Business: Onboarding direto do Instagram (converte / vincula na hora)
+      const extrasParam =
+        channel === 'instagram'
+          ? `&extras=${encodeURIComponent(JSON.stringify({ setup: { channel: 'IG_API_ONBOARDING' } }))}&display=page`
+          : '';
+
+      const metaUrl = `https://www.facebook.com/v21.0/dialog/oauth?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}${permParam}&state=${encodeURIComponent(state)}&response_type=code&auth_type=${authType}${extrasParam}`;
 
       return Response.redirect(metaUrl);
     }

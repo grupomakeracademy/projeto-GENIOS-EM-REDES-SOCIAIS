@@ -2,6 +2,37 @@ import { adminClient } from '@/lib/supabase/server';
 import { checked } from '@/lib/security/context';
 import { encrypt } from '@/lib/security/crypto';
 
+interface DiscoveredPage {
+  id: string;
+  name: string;
+  access_token: string;
+  category?: string;
+  instagram_business_account?: {
+    id: string;
+    username?: string;
+    name?: string;
+    account_type?: string;
+    profile_picture_url?: string;
+  };
+  connected_instagram_account?: {
+    id: string;
+    username?: string;
+    name?: string;
+    profile_picture_url?: string;
+  };
+}
+
+interface DiscoveredInstagram {
+  id: string;
+  username: string;
+  name?: string;
+  account_type?: string;
+  profile_picture_url?: string;
+  page_id?: string;
+  page_name?: string;
+  access_token?: string;
+}
+
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
@@ -67,9 +98,9 @@ export async function GET(request: Request) {
         });
       }
 
-      // Trocar code por token de usuário
+      // Trocar code por token de usuário de curta duração
       const tokenRes = await fetch(
-        `https://graph.facebook.com/v19.0/oauth/access_token?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${encodeURIComponent(clientSecret)}&code=${encodeURIComponent(code)}`,
+        `https://graph.facebook.com/v21.0/oauth/access_token?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${encodeURIComponent(clientSecret)}&code=${encodeURIComponent(code)}`,
       );
 
       if (!tokenRes.ok) {
@@ -84,7 +115,7 @@ export async function GET(request: Request) {
 
       // Trocar por token de longa duração (60 dias)
       const longLivedRes = await fetch(
-        `https://graph.facebook.com/v19.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}&fb_exchange_token=${encodeURIComponent(shortLivedToken)}`,
+        `https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}&fb_exchange_token=${encodeURIComponent(shortLivedToken)}`,
       );
 
       let userToken = shortLivedToken;
@@ -93,85 +124,167 @@ export async function GET(request: Request) {
         userToken = longJson.access_token || shortLivedToken;
       }
 
-      // Buscar Páginas e Contas do Instagram vinculadas
-      type PageItem = {
-        id: string;
-        name: string;
-        access_token: string;
-        instagram_business_account?: { id: string; username: string; name: string; account_type?: string };
-      };
-      const rawPages: Array<{ id: string; name: string; access_token: string }> = [];
-      const pages: PageItem[] = [];
-      let accErrorDetail = '';
+      // Buscar perfil do usuário e permissões concedidas (para diagnóstico)
+      const meRes = await fetch(
+        `https://graph.facebook.com/v21.0/me?fields=id,name,email&access_token=${encodeURIComponent(userToken)}`,
+      ).catch(() => null);
+      const meData = meRes?.ok ? await meRes.json().catch(() => ({})) : {};
+      const userName = meData.name || 'seu perfil do Facebook';
 
-      // 0. Inspecionar debug_token para Granular Scopes (Facebook Login for Business)
+      const permsRes = await fetch(
+        `https://graph.facebook.com/v21.0/me/permissions?access_token=${encodeURIComponent(userToken)}`,
+      ).catch(() => null);
+      const permsData = permsRes?.ok ? await permsRes.json().catch(() => ({})) : {};
+      const grantedPermissions = Array.isArray(permsData.data)
+        ? permsData.data
+            .filter((p: { status?: string }) => p.status === 'granted')
+            .map((p: { permission?: string }) => p.permission)
+        : [];
+
+      // ESTRATÉGIA COMPLETA DE DESCOBERTA DE PÁGINAS E INSTAGRAM
+      const pagesMap = new Map<string, DiscoveredPage>();
+      const instagramAccounts: DiscoveredInstagram[] = [];
+
+      const registerPage = (page: DiscoveredPage) => {
+        const existing = pagesMap.get(page.id);
+        if (!existing) {
+          pagesMap.set(page.id, page);
+        } else {
+          pagesMap.set(page.id, {
+            ...existing,
+            ...page,
+            access_token: page.access_token || existing.access_token,
+            instagram_business_account: page.instagram_business_account || existing.instagram_business_account,
+            connected_instagram_account: page.connected_instagram_account || existing.connected_instagram_account,
+          });
+        }
+      };
+
+      // 1. ESTRATÉGIA PRINCIPAL: GET /me/accounts (Método Oficial da Meta)
+      // Retorna TODAS as páginas com seu Page Access Token e contas do Instagram vinculadas
+      try {
+        const accountsRes = await fetch(
+          `https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token,category,instagram_business_account{id,username,name,profile_picture_url},connected_instagram_account{id,username,name,profile_picture_url}&access_token=${encodeURIComponent(userToken)}`,
+        );
+        if (accountsRes.ok) {
+          const accJson = (await accountsRes.json()) as { data?: any[] };
+          if (Array.isArray(accJson.data)) {
+            for (const p of accJson.data) {
+              registerPage({
+                id: p.id,
+                name: p.name,
+                access_token: p.access_token,
+                category: p.category,
+                instagram_business_account: p.instagram_business_account,
+                connected_instagram_account: p.connected_instagram_account,
+              });
+            }
+          }
+        } else {
+          console.error('[Meta OAuth] me/accounts HTTP error:', await accountsRes.text());
+        }
+      } catch (e) {
+        console.error('[Meta OAuth] me/accounts fetch exception:', e);
+      }
+
+      // 2. ESTRATÉGIA SECUNDÁRIA: Enriquecer páginas consultando cada nó com o Page Access Token
+      // (Algumas contas da Meta não retornam instagram_business_account na listagem /me/accounts, mas retornam no nó /{page_id})
+      for (const [pageId, page] of Array.from(pagesMap.entries())) {
+        const tokenToUse = page.access_token || userToken;
+        if (!page.instagram_business_account && !page.connected_instagram_account) {
+          try {
+            const pageDetailRes = await fetch(
+              `https://graph.facebook.com/v21.0/${pageId}?fields=instagram_business_account{id,username,name,profile_picture_url,account_type},connected_instagram_account{id,username,name,profile_picture_url}&access_token=${encodeURIComponent(tokenToUse)}`,
+            );
+            if (pageDetailRes.ok) {
+              const detailJson = (await pageDetailRes.json()) as any;
+              if (detailJson.instagram_business_account) {
+                page.instagram_business_account = detailJson.instagram_business_account;
+              }
+              if (detailJson.connected_instagram_account) {
+                page.connected_instagram_account = detailJson.connected_instagram_account;
+              }
+            }
+          } catch (e) {
+            console.error(`[Meta OAuth] Page detail fetch error for ${pageId}:`, e);
+          }
+        }
+
+        // Tentar também endpoint /{page_id}/instagram_accounts
+        if (!page.instagram_business_account && !page.connected_instagram_account) {
+          try {
+            const igListRes = await fetch(
+              `https://graph.facebook.com/v21.0/${pageId}/instagram_accounts?fields=id,username,name,profile_picture_url&access_token=${encodeURIComponent(tokenToUse)}`,
+            );
+            if (igListRes.ok) {
+              const igListJson = (await igListRes.json()) as any;
+              if (Array.isArray(igListJson.data) && igListJson.data.length > 0) {
+                page.instagram_business_account = igListJson.data[0];
+              }
+            }
+          } catch (e) {
+            console.error(`[Meta OAuth] instagram_accounts fetch error for ${pageId}:`, e);
+          }
+        }
+      }
+
+      // 3. ESTRATÉGIA TERCIÁRIA: Granular Scopes via debug_token (Facebook Login for Business)
       try {
         const debugRes = await fetch(
-          `https://graph.facebook.com/v19.0/debug_token?input_token=${encodeURIComponent(userToken)}&access_token=${encodeURIComponent(clientId)}|${encodeURIComponent(clientSecret)}`,
+          `https://graph.facebook.com/v21.0/debug_token?input_token=${encodeURIComponent(userToken)}&access_token=${encodeURIComponent(clientId)}|${encodeURIComponent(clientSecret)}`,
         );
         if (debugRes.ok) {
-          const debugData = (await debugRes.json()) as {
-            data?: {
-              granular_scopes?: Array<{ scope: string; target_ids?: string[] }>;
-            };
-          };
+          const debugData = (await debugRes.json()) as any;
           const granularScopes = debugData?.data?.granular_scopes || [];
-          const pageIdSet = new Set<string>();
-          const igIdSet = new Set<string>();
 
           for (const item of granularScopes) {
-            if (['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'].includes(item.scope)) {
-              (item.target_ids || []).forEach((id: string) => pageIdSet.add(id));
-            }
-            if (['instagram_basic', 'instagram_content_publish'].includes(item.scope)) {
-              (item.target_ids || []).forEach((id: string) => igIdSet.add(id));
-            }
-          }
-
-          for (const pid of pageIdSet) {
-            try {
-              const pRes = await fetch(
-                `https://graph.facebook.com/v19.0/${pid}?fields=id,name,access_token&access_token=${encodeURIComponent(userToken)}`,
-              );
-              if (pRes.ok) {
-                const pJson = (await pRes.json()) as { id: string; name: string; access_token?: string };
-                if (!rawPages.some((p) => p.id === pJson.id)) {
-                  rawPages.push({
-                    id: pJson.id,
-                    name: pJson.name,
-                    access_token: pJson.access_token || userToken,
-                  });
+            // Se o escopo granular tiver IDs diretos do Instagram
+            if (['instagram_basic', 'instagram_content_publish', 'instagram_manage_comments'].includes(item.scope)) {
+              for (const igId of item.target_ids || []) {
+                try {
+                  const igRes = await fetch(
+                    `https://graph.facebook.com/v21.0/${igId}?fields=id,username,name,profile_picture_url,account_type&access_token=${encodeURIComponent(userToken)}`,
+                  );
+                  if (igRes.ok) {
+                    const igJson = (await igRes.json()) as any;
+                    if (igJson.id && !instagramAccounts.some((acc) => acc.id === igJson.id)) {
+                      instagramAccounts.push({
+                        id: igJson.id,
+                        username: igJson.username || `instagram_${igJson.id}`,
+                        name: igJson.name,
+                        account_type: igJson.account_type || 'BUSINESS',
+                        profile_picture_url: igJson.profile_picture_url,
+                        access_token: userToken,
+                      });
+                    }
+                  }
+                } catch (e) {
+                  console.error(`[Meta OAuth] Error fetching granular IG ${igId}:`, e);
                 }
               }
-            } catch (e) {
-              console.error(`[Meta OAuth] Error fetching granular page ${pid}:`, e);
             }
-          }
 
-          for (const igId of igIdSet) {
-            try {
-              const igRes = await fetch(
-                `https://graph.facebook.com/v19.0/${igId}?fields=id,username,name,account_type&access_token=${encodeURIComponent(userToken)}`,
-              );
-              if (igRes.ok) {
-                const igJson = (await igRes.json()) as { id: string; username: string; name: string; account_type?: string };
-                const matchedPage =
-                  rawPages.find((p) => p.name.toLowerCase().includes(igJson.name?.toLowerCase())) ||
-                  rawPages[0];
-                pages.push({
-                  id: matchedPage?.id || igJson.id,
-                  name: matchedPage?.name || igJson.name,
-                  access_token: matchedPage?.access_token || userToken,
-                  instagram_business_account: {
-                    id: igJson.id,
-                    username: igJson.username,
-                    account_type: igJson.account_type,
-                    name: igJson.name,
-                  },
-                });
+            // Se o escopo granular tiver IDs de páginas que ainda não temos
+            if (['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'].includes(item.scope)) {
+              for (const pid of item.target_ids || []) {
+                if (!pagesMap.has(pid)) {
+                  try {
+                    const pRes = await fetch(
+                      `https://graph.facebook.com/v21.0/${pid}?fields=id,name,access_token&access_token=${encodeURIComponent(userToken)}`,
+                    );
+                    if (pRes.ok) {
+                      const pJson = (await pRes.json()) as any;
+                      registerPage({
+                        id: pJson.id,
+                        name: pJson.name,
+                        access_token: pJson.access_token || userToken,
+                      });
+                    }
+                  } catch (e) {
+                    console.error(`[Meta OAuth] Error fetching granular page ${pid}:`, e);
+                  }
+                }
               }
-            } catch (e) {
-              console.error(`[Meta OAuth] Error fetching granular IG ${igId}:`, e);
             }
           }
         }
@@ -179,67 +292,44 @@ export async function GET(request: Request) {
         console.error('[Meta OAuth] debug_token fetch error:', e);
       }
 
-      // 1. Tentar me/accounts com campos básicos (id, name, access_token) se rawPages ainda vazio
-      if (rawPages.length === 0) {
-        try {
-          const accountsRes = await fetch(
-            `https://graph.facebook.com/v19.0/me/accounts?fields=id,name,access_token&access_token=${encodeURIComponent(userToken)}`,
-          );
-          if (accountsRes.ok) {
-            const accJson = (await accountsRes.json()) as { data?: Array<{ id: string; name: string; access_token: string }> };
-            if (Array.isArray(accJson.data)) {
-              rawPages.push(...accJson.data);
-            }
-          } else {
-            const errData = await accountsRes.text();
-            accErrorDetail = `me/accounts: ${errData}`;
-            console.error('[Meta OAuth] me/accounts error:', errData);
-          }
-        } catch (e) {
-          accErrorDetail = `me/accounts exception: ${String(e)}`;
-          console.error('[Meta OAuth] me/accounts fetch exception:', e);
-        }
-      }
-
-      // 2. Se vazio, tentar com shortLivedToken
-      if (rawPages.length === 0 && shortLivedToken !== userToken) {
-        try {
-          const accountsResShort = await fetch(
-            `https://graph.facebook.com/v19.0/me/accounts?fields=id,name,access_token&access_token=${encodeURIComponent(shortLivedToken)}`,
-          );
-          if (accountsResShort.ok) {
-            const accJson = (await accountsResShort.json()) as { data?: Array<{ id: string; name: string; access_token: string }> };
-            if (Array.isArray(accJson.data)) {
-              rawPages.push(...accJson.data);
-            }
-          }
-        } catch (e) {
-          console.error('[Meta OAuth] short-lived me/accounts fetch error:', e);
-        }
-      }
-
-      // 3. Se ainda vazio, tentar buscar via Meta Business Suite (me/businesses)
-      if (rawPages.length === 0) {
+      // 4. ESTRATÉGIA QUATERNÁRIA: Meta Business Suite (me/businesses) se nada encontrado
+      if (
+        pagesMap.size === 0 ||
+        (!instagramAccounts.length &&
+          !Array.from(pagesMap.values()).some((p) => p.instagram_business_account || p.connected_instagram_account))
+      ) {
         try {
           const bizRes = await fetch(
-            `https://graph.facebook.com/v19.0/me/businesses?fields=id,name,owned_pages{id,name,access_token},client_pages{id,name,access_token}&access_token=${encodeURIComponent(userToken)}`,
+            `https://graph.facebook.com/v21.0/me/businesses?fields=id,name,owned_pages{id,name,access_token,instagram_business_account{id,username,name,profile_picture_url}},client_pages{id,name,access_token,instagram_business_account{id,username,name,profile_picture_url}},instagram_business_accounts{id,username,name,profile_picture_url}&access_token=${encodeURIComponent(userToken)}`,
           );
           if (bizRes.ok) {
-            const bizJson = (await bizRes.json()) as {
-              data?: Array<{
-                id: string;
-                name: string;
-                owned_pages?: { data?: Array<{ id: string; name: string; access_token: string }> };
-                client_pages?: { data?: Array<{ id: string; name: string; access_token: string }> };
-              }>;
-            };
+            const bizJson = (await bizRes.json()) as any;
             if (Array.isArray(bizJson.data)) {
               for (const biz of bizJson.data) {
-                if (Array.isArray(biz.owned_pages?.data)) {
-                  rawPages.push(...biz.owned_pages.data);
+                const allPages = [
+                  ...(biz.owned_pages?.data || []),
+                  ...(biz.client_pages?.data || []),
+                ];
+                for (const p of allPages) {
+                  registerPage({
+                    id: p.id,
+                    name: p.name,
+                    access_token: p.access_token,
+                    instagram_business_account: p.instagram_business_account,
+                  });
                 }
-                if (Array.isArray(biz.client_pages?.data)) {
-                  rawPages.push(...biz.client_pages.data);
+                if (Array.isArray(biz.instagram_business_accounts?.data)) {
+                  for (const ig of biz.instagram_business_accounts.data) {
+                    if (!instagramAccounts.some((acc) => acc.id === ig.id)) {
+                      instagramAccounts.push({
+                        id: ig.id,
+                        username: ig.username || `instagram_${ig.id}`,
+                        name: ig.name,
+                        profile_picture_url: ig.profile_picture_url,
+                        access_token: userToken,
+                      });
+                    }
+                  }
                 }
               }
             }
@@ -249,101 +339,94 @@ export async function GET(request: Request) {
         }
       }
 
-      // 4. Se ainda vazio, tentar me?fields=accounts{...}
-      if (rawPages.length === 0) {
-        try {
-          const meAccRes = await fetch(
-            `https://graph.facebook.com/v19.0/me?fields=accounts{id,name,access_token}&access_token=${encodeURIComponent(userToken)}`,
-          );
-          if (meAccRes.ok) {
-            const meAccJson = (await meAccRes.json()) as { accounts?: { data?: Array<{ id: string; name: string; access_token: string }> } };
-            if (Array.isArray(meAccJson.accounts?.data)) {
-              rawPages.push(...meAccJson.accounts.data);
+      // Coletar todas as contas de Instagram descobertas via páginas
+      const allPages = Array.from(pagesMap.values());
+      for (const page of allPages) {
+        const ig = page.instagram_business_account || page.connected_instagram_account;
+        if (ig && ig.id && !instagramAccounts.some((acc) => acc.id === ig.id)) {
+          let username = ig.username;
+          let profilePic = ig.profile_picture_url;
+          if (!username) {
+            try {
+              const igInfoRes = await fetch(
+                `https://graph.facebook.com/v21.0/${ig.id}?fields=id,username,name,profile_picture_url,account_type&access_token=${encodeURIComponent(page.access_token || userToken)}`,
+              );
+              if (igInfoRes.ok) {
+                const igInfo = (await igInfoRes.json()) as any;
+                username = igInfo.username;
+                profilePic = igInfo.profile_picture_url;
+              }
+            } catch (e) {
+              console.error(`[Meta OAuth] IG info fetch error for ${ig.id}:`, e);
             }
           }
-        } catch (e) {
-          console.error('[Meta OAuth] me?fields=accounts fetch error:', e);
-        }
-      }
 
-      // 5. Enriquecer cada página com o Instagram Business Account vinculado se ainda não estiver em pages
-      for (const p of rawPages) {
-        if (!pages.some((page) => page.id === p.id)) {
-          let igAccount: { id: string; username: string; name: string; account_type?: string } | undefined;
-        try {
-          const igRes = await fetch(
-            `https://graph.facebook.com/v19.0/${p.id}?fields=instagram_business_account{id,username,name,account_type}&access_token=${encodeURIComponent(p.access_token || userToken)}`,
-          );
-          if (igRes.ok) {
-            const igJson = (await igRes.json()) as {
-              instagram_business_account?: { id: string; username: string; name: string; account_type?: string };
-            };
-            igAccount = igJson.instagram_business_account;
-          }
-        } catch (e) {
-          console.error(`[Meta OAuth] Error fetching IG for page ${p.id}:`, e);
-        }
-          pages.push({
-            id: p.id,
-            name: p.name,
-            access_token: p.access_token,
-            instagram_business_account: igAccount,
+          instagramAccounts.push({
+            id: ig.id,
+            username: username || `instagram_${ig.id}`,
+            name: ig.name,
+            account_type: (ig as any).account_type || 'BUSINESS',
+            profile_picture_url: profilePic,
+            page_id: page.id,
+            page_name: page.name,
+            access_token: page.access_token || userToken,
           });
         }
       }
 
-      if (pages.length === 0) {
-        const meRes = await fetch(
-          `https://graph.facebook.com/v19.0/me?fields=id,name&access_token=${encodeURIComponent(userToken)}`,
-        ).catch(() => null);
-        const meData = meRes?.ok ? await meRes.json().catch(() => ({})) : {};
-        const userName = meData.name || 'seu perfil pessoal';
-
-        const permsRes = await fetch(
-          `https://graph.facebook.com/v19.0/me/permissions?access_token=${encodeURIComponent(userToken)}`,
-        ).catch(() => null);
-        const permsData = permsRes?.ok ? await permsRes.json().catch(() => ({})) : {};
-        const grantedList = Array.isArray(permsData.data)
-          ? permsData.data
-              .filter((p: { status?: string }) => p.status === 'granted')
-              .map((p: { permission?: string }) => p.permission)
-              .join(', ')
-          : 'nenhuma';
-
+      // Validação: caso o perfil não tenha nenhuma página ou conta conectada
+      if (allPages.length === 0 && instagramAccounts.length === 0) {
+        const grantedList = grantedPermissions.length > 0 ? grantedPermissions.join(', ') : 'nenhuma';
         return renderHtmlResponse({
           success: false,
           message: `Conectado como <strong>${userName}</strong>.<br><br>
-          <strong>Permissões concedidas pela Meta:</strong> <code>${grantedList}</code><br>
-          ${accErrorDetail ? `<small style="color:#ef4444;display:block;margin-top:6px;">Detalhe: ${accErrorDetail}</small>` : ''}
-          <br>
-          <strong>Solução no Painel da Meta:</strong><br>
-          No Meta Developers (developers.facebook.com), vá em <strong>Casos de uso</strong> ou <strong>Revisão do aplicativo > Permissões e recursos</strong> e adicione as permissões <code>pages_show_list</code> e <code>pages_manage_posts</code> com <em>Acesso Padrão</em> ao seu aplicativo.`,
+          Nenhuma Página do Facebook ou Conta Comercial foi encontrada no seu perfil.<br><br>
+          <strong>Permissões concedidas pela Meta:</strong> <code>${grantedList}</code><br><br>
+          <strong>Como resolver:</strong><br>
+          1. Acesse o <a href="https://www.facebook.com/pages/create" target="_blank" style="color:#38bdf8;">Facebook</a> e confirme que você é Administrador de uma Página comercial.<br>
+          2. No painel do Meta Developers, confirme que a permissão <code>pages_show_list</code> está liberada.`,
         });
       }
 
+      // PROCESSAMENTO ESPECÍFICO DO CANAL
       if (channel === 'instagram') {
-        const pageWithIg = pages.find((p) => p.instagram_business_account?.id);
-        if (!pageWithIg || !pageWithIg.instagram_business_account) {
+        const igTarget = instagramAccounts[0];
+
+        if (!igTarget) {
+          const pageNamesList = allPages
+            .map((p) => `<li><strong>${p.name}</strong> (ID: ${p.id})</li>`)
+            .join('');
+
           return renderHtmlResponse({
             success: false,
-            message:
-              'Nenhuma Conta Profissional do Instagram vinculada à sua Página foi encontrada. Certifique-se de vincular sua conta comercial no Meta Business Suite.',
+            message: `Conectado com sucesso como <strong>${userName}</strong>.<br><br>
+            <strong>Páginas encontradas:</strong>
+            <ul style="text-align:left;margin:10px 0;padding-left:20px;color:#cbd5e1;">
+              ${pageNamesList || '<li>Nenhuma página listada</li>'}
+            </ul>
+            <strong>Motivo:</strong> Nenhuma das suas Páginas possui uma <strong>Conta Profissional do Instagram (Comercial ou Criador)</strong> vinculada no Meta Business Suite.<br><br>
+            <strong>Como vincular em 1 minuto:</strong><br>
+            1. Acesse o <a href="https://business.facebook.com/latest/settings/instagram_account" target="_blank" style="color:#38bdf8;text-decoration:underline;">Meta Business Suite &rarr; Contas do Instagram</a>.<br>
+            2. Clique em <strong>Adicionar conta</strong> e conecte seu perfil do Instagram.<br>
+            3. No app do Instagram no celular, vá em <em>Configurações &rarr; Tipo de conta</em> e confirme que está como <em>Profissional/Criador</em>.<br>
+            4. Depois, feche esta janela e clique em Conectar novamente!`,
           });
         }
-        accountName = `@${pageWithIg.instagram_business_account.username}`;
-        externalId = pageWithIg.instagram_business_account.id;
-        accountType = pageWithIg.instagram_business_account.account_type;
-        const rawToken = pageWithIg.access_token || userToken;
+
+        accountName = igTarget.username.startsWith('@') ? igTarget.username : `@${igTarget.username}`;
+        externalId = igTarget.id;
+        accountType = igTarget.account_type || 'BUSINESS';
+        const rawToken = igTarget.access_token || userToken;
         try {
           tokenCiphertext = encrypt(rawToken, workspaceId);
         } catch {
           tokenCiphertext = rawToken;
         }
       } else {
+        // Canal Facebook
         const page =
-          rawPages.find((p) => p.name.toLowerCase().includes('maker') || p.name.toLowerCase().includes('geninhos')) ||
-          pages[0] ||
-          rawPages[0];
+          allPages.find((p) => p.name.toLowerCase().includes('maker') || p.name.toLowerCase().includes('geninhos')) ||
+          allPages[0];
         accountName = page.name;
         externalId = page.id;
         const rawToken = page.access_token || userToken;
@@ -452,6 +535,9 @@ function renderHtmlResponse({
       margin-top: 15px;
       cursor: pointer;
       border: none;
+    }
+    .btn:hover {
+      background: #475569;
     }
   </style>
 </head>
