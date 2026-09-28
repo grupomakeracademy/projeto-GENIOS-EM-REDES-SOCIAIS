@@ -42,8 +42,7 @@ export async function GET(request: Request) {
     // Instagram App ID: pode ser INSTAGRAM_APP_ID ou META_CLIENT_ID
     const clientId =
       process.env.INSTAGRAM_APP_ID ||
-      process.env.META_CLIENT_ID ||
-      process.env.META_APP_ID;
+      '1755657845653213';
 
     let appOrigin = process.env.APP_ORIGIN;
     if (!appOrigin || appOrigin.includes('127.0.0.1')) {

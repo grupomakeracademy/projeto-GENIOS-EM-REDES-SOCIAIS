@@ -44,12 +44,10 @@ export async function GET(request: Request) {
 
     const clientId =
       process.env.INSTAGRAM_APP_ID ||
-      process.env.META_CLIENT_ID ||
-      process.env.META_APP_ID;
+      '1755657845653213';
     const clientSecret =
       process.env.INSTAGRAM_APP_SECRET ||
-      process.env.META_CLIENT_SECRET ||
-      process.env.META_APP_SECRET;
+      '9e1fa4ab1649b7b7485636a039f25106';
 
     let appOrigin = process.env.APP_ORIGIN;
     if (!appOrigin || appOrigin.includes('127.0.0.1')) {
