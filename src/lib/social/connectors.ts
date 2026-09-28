@@ -45,6 +45,13 @@ export interface SocialConnector extends SocialAnalyticsProvider {
   getPublicationStatus(externalPostId: string): Promise<string>;
 }
 
+function getApiBase(token?: string): string {
+  if (token?.startsWith('IG')) {
+    return 'https://graph.instagram.com/v21.0';
+  }
+  return 'https://graph.facebook.com/v21.0';
+}
+
 function isDemoToken(token?: string): boolean {
   if (!token) return true;
   const lower = token.toLowerCase();
@@ -91,7 +98,7 @@ export class InstagramConnector implements SocialConnector {
     if (!token) return false;
     if (isDemoToken(token)) return true;
     try {
-      const res = await fetch(`https://graph.facebook.com/v19.0/me?access_token=${encodeURIComponent(token)}`);
+      const res = await fetch(`${getApiBase(token)}/me?access_token=${encodeURIComponent(token)}`);
       return res.ok;
     } catch {
       return false;
@@ -143,7 +150,7 @@ export class InstagramConnector implements SocialConnector {
     try {
       if (destination === 'stories') {
         const mediaUrl = mediaUrls[0];
-        const containerRes = await fetch(`https://graph.facebook.com/v19.0/${externalId}/media`, {
+        const containerRes = await fetch(`${getApiBase(token)}/${externalId}/media`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -160,7 +167,7 @@ export class InstagramConnector implements SocialConnector {
 
         const { id: creationId } = (await containerRes.json()) as { id: string };
 
-        const publishRes = await fetch(`https://graph.facebook.com/v19.0/${externalId}/media_publish`, {
+        const publishRes = await fetch(`${getApiBase(token)}/${externalId}/media_publish`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -188,7 +195,7 @@ export class InstagramConnector implements SocialConnector {
       if (!isCarousel) {
         // Post único de imagem
         const mediaUrl = mediaUrls[0];
-        const containerRes = await fetch(`https://graph.facebook.com/v19.0/${externalId}/media`, {
+        const containerRes = await fetch(`${getApiBase(token)}/${externalId}/media`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -206,7 +213,7 @@ export class InstagramConnector implements SocialConnector {
         const { id: creationId } = (await containerRes.json()) as { id: string };
 
         // Publicar contêiner
-        const publishRes = await fetch(`https://graph.facebook.com/v19.0/${externalId}/media_publish`, {
+        const publishRes = await fetch(`${getApiBase(token)}/${externalId}/media_publish`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -231,7 +238,7 @@ export class InstagramConnector implements SocialConnector {
         // Carrossel: criar contêineres individuais para cada imagem
         const childContainerIds: string[] = [];
         for (const url of mediaUrls) {
-          const childRes = await fetch(`https://graph.facebook.com/v19.0/${externalId}/media`, {
+          const childRes = await fetch(`${getApiBase(token)}/${externalId}/media`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -249,7 +256,7 @@ export class InstagramConnector implements SocialConnector {
         }
 
         // Criar contêiner pai do carrossel
-        const carouselRes = await fetch(`https://graph.facebook.com/v19.0/${externalId}/media`, {
+        const carouselRes = await fetch(`${getApiBase(token)}/${externalId}/media`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -268,7 +275,7 @@ export class InstagramConnector implements SocialConnector {
         const { id: carouselCreationId } = (await carouselRes.json()) as { id: string };
 
         // Publicar contêiner do carrossel
-        const publishRes = await fetch(`https://graph.facebook.com/v19.0/${externalId}/media_publish`, {
+        const publishRes = await fetch(`${getApiBase(token)}/${externalId}/media_publish`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -287,7 +294,7 @@ export class InstagramConnector implements SocialConnector {
         // Se o destino for Feed e Stories, publica também nos Stories
         if (destination === 'feed_and_stories' && mediaUrls.length > 0) {
           try {
-            const storyContainerRes = await fetch(`https://graph.facebook.com/v19.0/${externalId}/media`, {
+            const storyContainerRes = await fetch(`${getApiBase(token)}/${externalId}/media`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -298,7 +305,7 @@ export class InstagramConnector implements SocialConnector {
             });
             if (storyContainerRes.ok) {
               const { id: storyCreationId } = (await storyContainerRes.json()) as { id: string };
-              await fetch(`https://graph.facebook.com/v19.0/${externalId}/media_publish`, {
+              await fetch(`${getApiBase(token)}/${externalId}/media_publish`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -367,7 +374,7 @@ export class FacebookConnector implements SocialConnector {
     if (!token) return false;
     if (isDemoToken(token)) return true;
     try {
-      const res = await fetch(`https://graph.facebook.com/v19.0/me?access_token=${encodeURIComponent(token)}`);
+      const res = await fetch(`${getApiBase(token)}/me?access_token=${encodeURIComponent(token)}`);
       return res.ok;
     } catch {
       return false;
@@ -393,7 +400,7 @@ export class FacebookConnector implements SocialConnector {
       const mediaUrl = mediaUrls[0];
 
       if (destination === 'stories') {
-        const unpubRes = await fetch(`https://graph.facebook.com/v19.0/${pageId}/photos`, {
+        const unpubRes = await fetch(`${getApiBase(token)}/${pageId}/photos`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -404,7 +411,7 @@ export class FacebookConnector implements SocialConnector {
         });
         if (unpubRes.ok) {
           const unpubJson = (await unpubRes.json()) as { id: string };
-          const storyRes = await fetch(`https://graph.facebook.com/v19.0/${pageId}/photo_stories`, {
+          const storyRes = await fetch(`${getApiBase(token)}/${pageId}/photo_stories`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -425,7 +432,7 @@ export class FacebookConnector implements SocialConnector {
       }
 
       // Se houver imagem, publica como foto na página (Feed)
-      const res = await fetch(`https://graph.facebook.com/v19.0/${pageId}/photos`, {
+      const res = await fetch(`${getApiBase(token)}/${pageId}/photos`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -444,7 +451,7 @@ export class FacebookConnector implements SocialConnector {
 
       if (destination === 'feed_and_stories' && mediaUrl) {
         try {
-          await fetch(`https://graph.facebook.com/v19.0/${pageId}/photo_stories`, {
+          await fetch(`${getApiBase(token)}/${pageId}/photo_stories`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

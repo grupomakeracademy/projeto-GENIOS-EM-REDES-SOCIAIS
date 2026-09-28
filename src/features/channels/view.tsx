@@ -17,9 +17,9 @@ import {
 
 const oauthInfo: Record<string, { platform: string; docsUrl: string; desc: string }> = {
   instagram: {
-    platform: 'Meta Business Suite',
-    docsUrl: 'https://developers.facebook.com/docs/instagram-api',
-    desc: 'Requer uma conta profissional do Instagram vinculada a uma Página do Facebook no Meta Business.',
+    platform: 'Instagram API (Login Direto)',
+    docsUrl: 'https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-instagram-login',
+    desc: 'Conexão direta oficial do Instagram. Não exige Página do Facebook nem Meta Business Suite.',
   },
   facebook: {
     platform: 'Meta Business Suite',
@@ -314,7 +314,7 @@ export function ChannelsView({
               </div>
             </div>
 
-            {activeModal === 'instagram' || activeModal === 'facebook' ? (
+            {activeModal === 'instagram' ? (
               <div
                 style={{
                   background: 'linear-gradient(135deg, rgba(225, 48, 108, 0.08), rgba(131, 58, 180, 0.08))',
@@ -325,10 +325,10 @@ export function ChannelsView({
                 }}
               >
                 <div style={{ display: 'inline-flex', marginBottom: 12 }}>
-                  <SocialLogo channel={activeModal} size={36} />
+                  <SocialLogo channel="instagram" size={36} />
                 </div>
                 <h3 style={{ margin: '0 0 6px', fontSize: '16px', fontWeight: 600 }}>
-                  Conexão Automática Oficial (1 Clique)
+                  Conexão Oficial Direta do Instagram
                 </h3>
                 <p
                   style={{
@@ -339,11 +339,11 @@ export function ChannelsView({
                     lineHeight: 1.5,
                   }}
                 >
-                  Clique no botão abaixo para autorizar diretamente na Meta. O sistema capturará seu ID e token de 60 dias automaticamente.
+                  Conecte seu perfil profissional ou de criador diretamente com sua conta do Instagram. <strong>Sem depender de Página do Facebook nem de Meta Business Suite.</strong>
                 </p>
                 <button
                   type="button"
-                  onClick={() => openOAuthPopup(activeModal)}
+                  onClick={openInstagramDirectPopup}
                   style={{
                     width: '100%',
                     padding: '12px 16px',
@@ -362,12 +362,12 @@ export function ChannelsView({
                   }}
                 >
                   <Link2 size={16} />
-                  Entrar com Meta / {channels[activeModal]?.name}
+                  Entrar com Instagram (Login Direto)
                 </button>
-                <div style={{ marginTop: 10 }}>
+                <div style={{ marginTop: 12 }}>
                   <button
                     type="button"
-                    onClick={() => openOAuthPopup(activeModal, true)}
+                    onClick={() => openOAuthPopup('instagram')}
                     style={{
                       background: 'none',
                       border: 'none',
@@ -379,10 +379,78 @@ export function ChannelsView({
                       alignItems: 'center',
                       gap: 5,
                     }}
-                    title="Permite fazer login com outro perfil do Facebook / Meta"
                   >
-                    <Unlink size={13} />
-                    Trocar de conta da Meta (Entrar com outro perfil)
+                    Ou conectar via Página do Facebook / Meta Business
+                  </button>
+                </div>
+              </div>
+            ) : activeModal === 'facebook' ? (
+              <div
+                style={{
+                  background: 'rgba(24, 119, 242, 0.08)',
+                  border: '1px solid rgba(24, 119, 242, 0.3)',
+                  borderRadius: 10,
+                  padding: '20px',
+                  textAlign: 'center',
+                }}
+              >
+                <div style={{ display: 'inline-flex', marginBottom: 12 }}>
+                  <SocialLogo channel="facebook" size={36} />
+                </div>
+                <h3 style={{ margin: '0 0 6px', fontSize: '16px', fontWeight: 600 }}>
+                  Conexão Oficial com o Facebook
+                </h3>
+                <p
+                  style={{
+                    margin: '0 auto 16px',
+                    maxWidth: '380px',
+                    color: 'var(--muted)',
+                    fontSize: '13px',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  Conecte sua Página do Facebook para agendar e publicar posts automaticamente.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => openOAuthPopup('facebook')}
+                  style={{
+                    width: '100%',
+                    padding: '12px 16px',
+                    borderRadius: 8,
+                    background: '#1877f2',
+                    color: '#fff',
+                    border: 'none',
+                    fontWeight: 600,
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    boxShadow: '0 4px 12px rgba(24, 119, 242, 0.25)',
+                  }}
+                >
+                  <Link2 size={16} />
+                  Entrar com Facebook
+                </button>
+                <div style={{ marginTop: 10 }}>
+                  <button
+                    type="button"
+                    onClick={() => openOAuthPopup('facebook', true)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--muted)',
+                      fontSize: '12px',
+                      cursor: 'pointer',
+                      textDecoration: 'underline',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 5,
+                    }}
+                  >
+                    <RefreshCw size={12} /> Trocar conta do Facebook
                   </button>
                 </div>
               </div>
