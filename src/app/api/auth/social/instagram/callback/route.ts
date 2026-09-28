@@ -126,10 +126,11 @@ export async function GET(request: Request) {
       console.warn('[Instagram Direct OAuth] Long-lived token warning:', e);
     }
 
-    // 3. Obter dados do perfil do Instagram (/me)
+        // 3. Obter dados do perfil do Instagram (/me)
     let igUsername = `instagram_${userId}`;
     let accountType = 'BUSINESS';
     let profilePicUrl: string | undefined;
+    let exactExternalId = userId;
 
     try {
       const meRes = await fetch(
@@ -139,6 +140,9 @@ export async function GET(request: Request) {
       );
       if (meRes.ok) {
         const meJson = (await meRes.json()) as any;
+        if (meJson.id) {
+          exactExternalId = String(meJson.id);
+        }
         if (meJson.username) {
           igUsername = meJson.username;
         }
@@ -170,9 +174,11 @@ export async function GET(request: Request) {
           agent_id: agentId,
           channel: 'instagram',
           account_name: accountName,
-          external_id: userId,
+          external_id: exactExternalId,
           token_ciphertext: tokenCiphertext,
           metadata: {
+            id: exactExternalId,
+            user_id: userId,
             connected_via: 'instagram_direct_login',
             connected_at: new Date().toISOString(),
             account_type: accountType,

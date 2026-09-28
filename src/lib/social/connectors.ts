@@ -67,6 +67,37 @@ function isDemoToken(token?: string): boolean {
  * Instagram Connector using Meta Graph API
  * Supports single image and carousel posts.
  */
+
+async function waitForIgContainer(apiBase: string, containerId: string, token: string, maxWaitMs = 30000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < maxWaitMs) {
+    try {
+      const res = await fetch(`${apiBase}/${containerId}?fields=status_code&access_token=${encodeURIComponent(token)}`);
+      if (res.ok) {
+        const data = (await res.json()) as { status_code?: string };
+        if (data.status_code === 'FINISHED') return;
+        if (data.status_code === 'ERROR' || data.status_code === 'EXPIRED') {
+          throw new Error(`container_processing_failed: ${JSON.stringify(data)}`);
+        }
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message.startsWith('container_processing_failed')) throw e;
+    }
+    await new Promise((r) => setTimeout(r, 1200));
+  }
+}
+
+async function getIgPermalink(apiBase: string, postId: string, token: string, fallbackUrl: string): Promise<string> {
+  try {
+    const res = await fetch(`${apiBase}/${postId}?fields=permalink&access_token=${encodeURIComponent(token)}`);
+    if (res.ok) {
+      const data = (await res.json()) as { permalink?: string };
+      if (data.permalink) return data.permalink;
+    }
+  } catch {}
+  return fallbackUrl;
+}
+
 export class InstagramConnector implements SocialConnector {
   readonly channel: Channel = 'instagram';
 
@@ -105,12 +136,12 @@ export class InstagramConnector implements SocialConnector {
     }
   }
 
-  async publish(payload: PublishPayload): Promise<PublishResult> {
+    async publish(payload: PublishPayload): Promise<PublishResult> {
     const { caption, mediaUrls, token, externalId, destination = 'feed' } = payload;
     const now = new Date().toISOString();
 
     // Fallback de demonstração / testes locais
-    if (isDemoToken(token) || !externalId) {
+    if (isDemoToken(token) || (!externalId && !token?.startsWith('IG'))) {
       const fakeId = `ig_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
       return {
         success: true,
@@ -120,19 +151,23 @@ export class InstagramConnector implements SocialConnector {
       };
     }
 
+    const apiBase = getApiBase(token);
+    // Para login direto do Instagram, 'me' é o identificador oficial e mais resiliente
+    const targetId = token?.startsWith('IG') ? 'me' : (externalId || 'me');
+
     if (payload.mediaType === 'video') {
       if (mediaUrls.length !== 1) throw new Error('unsupported_capability');
       const targets = destination === 'feed_and_stories' ? ['feed', 'stories'] : [destination];
       const published: string[] = [];
       for (const target of targets) {
-        const base = 'https://graph.facebook.com/' + (process.env.META_GRAPH_VERSION || 'v25.0');
+        const base = apiBase;
         const call = async (path: string, body?: Record<string, unknown>) => {
           const response = await fetch(base + '/' + path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, access_token: token }) } : { headers: { Authorization: 'Bearer ' + token } });
           const data = await response.json();
           if (!response.ok || data.error) throw new Error('video_publication_failed');
           return data;
         };
-        const container = await call(externalId + '/media', { video_url: mediaUrls[0], media_type: target === 'stories' ? 'STORIES' : 'REELS', ...(target === 'feed' ? {caption, share_to_feed: true} : {}) });
+        const container = await call(targetId + '/media', { video_url: mediaUrls[0], media_type: target === 'stories' ? 'STORIES' : 'REELS', ...(target === 'feed' ? {caption, share_to_feed: true} : {}) });
         let complete = false;
         for (let attempt = 0; attempt < 30; attempt++) {
           const state = await call(container.id + '?fields=status_code');
@@ -141,7 +176,7 @@ export class InstagramConnector implements SocialConnector {
           await new Promise(resolve => setTimeout(resolve, 2000));
         }
         if (!complete) throw new Error('video_processing_timeout');
-        const post = await call(externalId + '/media_publish', { creation_id: container.id });
+        const post = await call(targetId + '/media_publish', { creation_id: container.id });
         published.push(post.id);
       }
       return { success: true, externalPostId: published.join(','), publishedAt: new Date().toISOString() };
@@ -150,7 +185,7 @@ export class InstagramConnector implements SocialConnector {
     try {
       if (destination === 'stories') {
         const mediaUrl = mediaUrls[0];
-        const containerRes = await fetch(`${getApiBase(token)}/${externalId}/media`, {
+        const containerRes = await fetch(`${apiBase}/${targetId}/media`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -166,8 +201,9 @@ export class InstagramConnector implements SocialConnector {
         }
 
         const { id: creationId } = (await containerRes.json()) as { id: string };
+        await waitForIgContainer(apiBase, creationId, token!);
 
-        const publishRes = await fetch(`${getApiBase(token)}/${externalId}/media_publish`, {
+        const publishRes = await fetch(`${apiBase}/${targetId}/media_publish`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -195,7 +231,7 @@ export class InstagramConnector implements SocialConnector {
       if (!isCarousel) {
         // Post único de imagem
         const mediaUrl = mediaUrls[0];
-        const containerRes = await fetch(`${getApiBase(token)}/${externalId}/media`, {
+        const containerRes = await fetch(`${apiBase}/${targetId}/media`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -211,9 +247,10 @@ export class InstagramConnector implements SocialConnector {
         }
 
         const { id: creationId } = (await containerRes.json()) as { id: string };
+        await waitForIgContainer(apiBase, creationId, token!);
 
         // Publicar contêiner
-        const publishRes = await fetch(`${getApiBase(token)}/${externalId}/media_publish`, {
+        const publishRes = await fetch(`${apiBase}/${targetId}/media_publish`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -228,17 +265,19 @@ export class InstagramConnector implements SocialConnector {
         }
 
         const { id: postId } = (await publishRes.json()) as { id: string };
+        const postUrl = await getIgPermalink(apiBase, postId, token!, `https://instagram.com/p/${postId}`);
+
         return {
           success: true,
           externalPostId: postId,
-          externalPostUrl: `https://instagram.com/p/${postId}`,
+          externalPostUrl: postUrl,
           publishedAt: now,
         };
       } else {
         // Carrossel: criar contêineres individuais para cada imagem
         const childContainerIds: string[] = [];
         for (const url of mediaUrls) {
-          const childRes = await fetch(`${getApiBase(token)}/${externalId}/media`, {
+          const childRes = await fetch(`${apiBase}/${targetId}/media`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -252,11 +291,12 @@ export class InstagramConnector implements SocialConnector {
             throw new Error(`instagram_carousel_child_failed: ${JSON.stringify(errData)}`);
           }
           const { id: childId } = (await childRes.json()) as { id: string };
+          await waitForIgContainer(apiBase, childId, token!);
           childContainerIds.push(childId);
         }
 
         // Criar contêiner pai do carrossel
-        const carouselRes = await fetch(`${getApiBase(token)}/${externalId}/media`, {
+        const carouselRes = await fetch(`${apiBase}/${targetId}/media`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -273,9 +313,10 @@ export class InstagramConnector implements SocialConnector {
         }
 
         const { id: carouselCreationId } = (await carouselRes.json()) as { id: string };
+        await waitForIgContainer(apiBase, carouselCreationId, token!);
 
         // Publicar contêiner do carrossel
-        const publishRes = await fetch(`${getApiBase(token)}/${externalId}/media_publish`, {
+        const publishRes = await fetch(`${apiBase}/${targetId}/media_publish`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -294,7 +335,7 @@ export class InstagramConnector implements SocialConnector {
         // Se o destino for Feed e Stories, publica também nos Stories
         if (destination === 'feed_and_stories' && mediaUrls.length > 0) {
           try {
-            const storyContainerRes = await fetch(`${getApiBase(token)}/${externalId}/media`, {
+            const storyContainerRes = await fetch(`${apiBase}/${targetId}/media`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -305,7 +346,8 @@ export class InstagramConnector implements SocialConnector {
             });
             if (storyContainerRes.ok) {
               const { id: storyCreationId } = (await storyContainerRes.json()) as { id: string };
-              await fetch(`${getApiBase(token)}/${externalId}/media_publish`, {
+              await waitForIgContainer(apiBase, storyCreationId, token!);
+              await fetch(`${apiBase}/${targetId}/media_publish`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -319,10 +361,12 @@ export class InstagramConnector implements SocialConnector {
           }
         }
 
+        const postUrl = await getIgPermalink(apiBase, postId, token!, `https://instagram.com/p/${postId}`);
+
         return {
           success: true,
           externalPostId: postId,
-          externalPostUrl: `https://instagram.com/p/${postId}`,
+          externalPostUrl: postUrl,
           publishedAt: now,
         };
       }
