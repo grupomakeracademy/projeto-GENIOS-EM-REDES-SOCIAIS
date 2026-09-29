@@ -127,6 +127,46 @@ test('pauta e imagem de referência: análise única, geração real e cota dobr
     expect(assetAfter.data!.summary_text).toBe(editedSummary);
     const finalBalance = await db.from('profiles').select('content_quota_balance').eq('id', userId).single();
     expect(initialBalance.data!.content_quota_balance - finalBalance.data!.content_quota_balance).toBe(2);
+
+    async function generateAdditional(instruction: string, name: string) {
+      const requested = await page.evaluate(async ({ agentId, instruction }) => {
+        const response = await fetch('/api/runs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agent_id: agentId, instruction, channels: ['instagram'], image_count: 1,
+            image_quality: 'low', idempotency_key: crypto.randomUUID() }) });
+        return { status: response.status, data: await response.json() };
+      }, { agentId, instruction });
+      expect(requested.status).toBe(202);
+      const id = requested.data.job.id as string;
+      await expect.poll(async () => {
+        const result = await db.from('background_jobs').select('status,last_error').eq('id', id).single();
+        if (result.data?.status === 'FAILED') throw new Error(`${name}: ${result.data.last_error}`);
+        return result.data?.status;
+      }, { timeout: 360_000, intervals: [1000, 3000, 5000] }).toBe('COMPLETED');
+      const run = await db.from('agent_runs').select('content_id').eq('job_id', id).single();
+      expect(run.error).toBeNull();
+      const variant = await db.from('content_variants').select('id').eq('content_id', run.data!.content_id).single();
+      expect(variant.error).toBeNull();
+      const media = await db.from('content_media').select('storage_path,generation_prompt').eq('variant_id', variant.data!.id).single();
+      expect(media.error).toBeNull();
+      const downloaded = await db.storage.from('brand-assets').download(media.data!.storage_path);
+      expect(downloaded.error).toBeNull();
+      await writeFile(`test-results/content-reference/${name}.png`, Buffer.from(await downloaded.data!.arrayBuffer()));
+      return media.data!.generation_prompt as string;
+    }
+
+    const emptyPrompt = await generateAdditional('', 'empty-pauta');
+    expect(emptyPrompt).not.toContain(instruction);
+    const specific = 'Uma professora com vestido verde mostra um globo azul a dois alunos em uma sala de aula ensolarada; um papagaio vermelho está pousado na janela.';
+    const specificPrompt = await generateAdditional(specific, 'specific-pauta');
+    expect(specificPrompt).toContain(specific);
+    expect(specificPrompt).not.toContain(instruction);
+    const alternate = 'Um cozinheiro de avental amarelo prepara pão em uma cozinha de azulejos brancos, com uma cesta de laranjas sobre a mesa.';
+    const alternatePrompt = await generateAdditional(alternate, 'alternate-pauta');
+    expect(alternatePrompt).toContain(alternate);
+    expect(alternatePrompt).not.toContain(specific);
+    expect(alternatePrompt).not.toContain(instruction);
+    const balanceAfterAll = await db.from('profiles').select('content_quota_balance').eq('id', userId).single();
+    expect(initialBalance.data!.content_quota_balance - balanceAfterAll.data!.content_quota_balance).toBe(5);
   } finally {
     if (workspaceId) {
       const assets = await db.from('assets').select('storage_path').eq('workspace_id', workspaceId);
