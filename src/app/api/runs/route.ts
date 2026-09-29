@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { guard, checked, fail, AppError } from '@/lib/security/context';
 import { adminClient } from '@/lib/supabase/server';
-import { channelSchema, destinationSchema, MAX_CONTENT_INSTRUCTION_LENGTH, contentGenerationQuota } from '@/lib/domain';
+import { channelSchema, destinationSchema, publicationTypeSchema, publicationSelectionValid, MAX_CONTENT_INSTRUCTION_LENGTH, contentGenerationQuota } from '@/lib/domain';
 import { executionResponsibles } from '@/features/content/responsibles';
 import { requireAgent } from '@/lib/security/agent';
 import { dispatchRequestedJob } from '@/lib/jobs/lifecycle';
@@ -77,6 +77,7 @@ export async function POST(request: Request) {
     const input = z
       .object({
         destination: destinationSchema.optional(),
+        publication_type: publicationTypeSchema.default('feed'),
         content_id: z.uuid().optional(),
         agent_id: z.uuid(),
         instruction: z.string().max(MAX_CONTENT_INSTRUCTION_LENGTH, 'A pauta deve ter no máximo 2.000 caracteres.').default(''),
@@ -90,6 +91,11 @@ export async function POST(request: Request) {
         idempotency_key: z.uuid(),
       })
       .parse(raw);
+
+    if (!publicationSelectionValid(input.publication_type, input.channels))
+      throw new AppError('Canal incompatível com o tipo de publicação.', 400);
+    if (input.publication_type === 'stories' && input.destination && input.destination !== 'stories')
+      throw new AppError('Stories deve utilizar o destino Stories.', 400);
 
     if (input.image_count <= 1) {
       input.is_carousel = false;

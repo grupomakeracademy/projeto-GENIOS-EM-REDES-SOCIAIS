@@ -49,9 +49,10 @@ it.each(['manual','routine','regeneration'])('composes and persists the shared %
   expect(final.equals(raw)).toBe(false);
   const { data, info } = await sharp(final).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const pixel = (x: number, y: number) => [...data.subarray((y * info.width + x) * 3, (y * info.width + x) * 3 + 3)];
-  // 35% of 1000 = 350; original 2:1 ratio => 175; margin=5%, left=50, top=1250.
-  expect(pixel(50,1250)).toEqual([255,0,0]); expect(pixel(399,1424)).toEqual([255,0,0]);
-  expect(pixel(400,1425)).toEqual([255,255,255]); expect(pixel(50,100)).toEqual([255,255,255]);
+  // The provider original remains 1000x1500; the final 4:5 image is 1000x1250.
+  expect([info.width, info.height]).toEqual([1000,1250]);
+  expect(pixel(50,1012)).toEqual([255,0,0]); expect(pixel(399,1186)).toEqual([255,0,0]);
+  expect(pixel(400,1187)).toEqual([255,255,255]); expect(pixel(50,100)).toEqual([255,255,255]);
 });
 it.each(['missing','download','manual','duplicate'])('fails before saving when expected logo is %s', async failure => {
   if (failure === 'missing') s.assets = [];

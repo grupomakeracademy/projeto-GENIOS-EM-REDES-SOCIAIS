@@ -131,7 +131,7 @@ test('routine persistence, channel selection, carousel and scheduled execution',
     await page.goto('/contents/'+cid);
     await page.getByRole('button',{name:'Prompt da imagem',exact:true}).click();
     await expect(page.locator('pre')).toHaveText(prompts[0]);
-    await page.getByRole('button',{name:'2',exact:true}).click();
+    await page.getByRole('button',{name:'Slide 2',exact:true}).click();
     await expect(page.locator('pre')).toHaveText(prompts[1]);
   } finally {
     if(wid) { await db.from('agent_schedules').update({enabled:false}).eq('workspace_id',wid); await db.from('workspaces').delete().eq('id',wid); }

@@ -25,9 +25,12 @@ import {
   type Channel,
   QUALITY_MULTIPLIERS,
   MAX_CONTENT_INSTRUCTION_LENGTH,
+  publicationChannels,
+  publicationRatio,
+  type PublicationType,
 } from '@/lib/domain';
 
-const ALL_CHANNELS: Channel[] = ['instagram', 'facebook', 'whatsapp', 'tiktok', 'x', 'linkedin'];
+const ALL_CHANNELS = publicationChannels.feed;
 type VisualReference = { id: string; name: string; url?: string; summary_text: string };
 const instructionLimitMessage = 'A pauta deve ter no máximo 2.000 caracteres.';
 
@@ -54,6 +57,7 @@ export function ContentFormModal({
 
   const [selected, setSelected] = useState('');
   const [selectedChannels, setChannels] = useState<Channel[]>(ALL_CHANNELS);
+  const [publicationType, setPublicationType] = useState<PublicationType>('feed');
   const [imageStyle, setImageStyle] = useState('Disney / Pixar');
   const [imageQuality, setImageQuality] = useState<'low' | 'medium'>('low');
   const [instruction, setInstruction] = useState('');
@@ -78,10 +82,13 @@ export function ContentFormModal({
     submission.current = { busy: false, key: crypto.randomUUID() };
     if (draftItem) {
       const strategy = (draftItem.strategy as Record<string, unknown>) || {};
+      const type: PublicationType = strategy.publication_type === 'stories' ? 'stories' : 'feed';
+      setPublicationType(type);
       const agentId = draftItem.agent_id || agents[0]?.id || '';
       setSelected(agentId);
       const draftChannels = draftItem.content_variants?.map((v) => v.channel) || [];
-      setChannels(draftChannels.length ? draftChannels : (agents.find((a) => a.id === agentId)?.channels || ALL_CHANNELS));
+      setChannels((draftChannels.length ? draftChannels : (agents.find((a) => a.id === agentId)?.channels || ALL_CHANNELS))
+        .filter(channel => publicationChannels[type].includes(channel)));
       setImageStyle(String(strategy.image_style || 'Disney / Pixar'));
       const q = strategy.image_quality as 'low' | 'medium' | undefined;
       setImageQuality(q === 'medium' ? 'medium' : 'low');
@@ -97,6 +104,7 @@ export function ContentFormModal({
       const firstAgent = agents[0];
       const agentId = firstAgent?.id || '';
       setSelected(agentId);
+      setPublicationType('feed');
       setChannels(firstAgent?.channels?.length ? firstAgent.channels : ALL_CHANNELS);
       setImageStyle('Disney / Pixar');
       setImageQuality(defaultImageQuality === 'medium' ? 'medium' : 'low');
@@ -262,6 +270,7 @@ export function ContentFormModal({
         is_carousel: isCarouselDisabled ? false : isCarousel,
         cta: cta.trim(),
         channels: selectedChannels,
+        publication_type: publicationType,
         image_count: Number(imageCount),
         image_quality: imageQuality,
         status: 'DRAFT' as const,
@@ -297,6 +306,7 @@ export function ContentFormModal({
         is_carousel: isCarouselDisabled ? false : isCarousel,
         cta: cta.trim(),
         channels: selectedChannels,
+        publication_type: publicationType,
         image_count: Number(imageCount),
         image_quality: imageQuality,
         idempotency_key: submission.current.key,
@@ -339,7 +349,7 @@ export function ContentFormModal({
                 setReferenceAssetId('');
                 setReferenceSummary('');
                 const agent = agents.find((a) => a.id === e.target.value);
-                if (agent?.channels?.length) setChannels(agent.channels);
+                if (agent?.channels?.length) setChannels(agent.channels.filter(channel => publicationChannels[publicationType].includes(channel)));
               }}
             >
               {agents.map((a) => (
@@ -449,6 +459,17 @@ export function ContentFormModal({
         </div>
 
         <div className="new-content-field">
+          <label className="new-content-label">Tipo de publicação</label>
+          <div className="quality-segmented-control" role="group" aria-label="Tipo de publicação">
+            {(['feed', 'stories'] as const).map(type => <button key={type} type="button"
+              className={`quality-pill ${publicationType === type ? 'active' : ''}`}
+              onClick={() => { setPublicationType(type); setChannels(previous => previous.filter(channel => publicationChannels[type].includes(channel))); }}>
+              {type === 'feed' ? 'Feed' : 'Stories'}
+            </button>)}
+          </div>
+        </div>
+
+        <div className="new-content-field">
           <div className="channel-section-header">
             <label className="new-content-label">Canais de publicação</label>
             <p className="new-content-sublabel">
@@ -456,7 +477,7 @@ export function ContentFormModal({
             </p>
           </div>
           <div className="new-content-channels-grid">
-            {ALL_CHANNELS.map((ch) => {
+            {publicationChannels[publicationType].map((ch) => {
               const isChecked = selectedChannels.includes(ch);
               return (
                 <div
@@ -485,7 +506,7 @@ export function ContentFormModal({
                     </span>
                     <div className="channel-card-info">
                       <span className="channel-name">{channels[ch].name}</span>
-                      <span className="channel-ratio">{channels[ch].ratio}</span>
+                      <span className="channel-ratio">{ch === 'whatsapp' && publicationType === 'stories' ? 'Status · ' : ''}{publicationRatio(publicationType, ch)}</span>
                     </div>
                   </div>
                   <div className="channel-checkbox-indicator">

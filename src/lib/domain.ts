@@ -16,6 +16,19 @@ export const channelSchema = z.enum([
   'x',
   'linkedin',
 ]);
+export const publicationTypeSchema = z.enum(['feed', 'stories']);
+export type PublicationType = z.infer<typeof publicationTypeSchema>;
+export const publicationChannels: Record<PublicationType, Channel[]> = {
+  feed: ['instagram', 'facebook', 'whatsapp', 'tiktok', 'x', 'linkedin'],
+  stories: ['instagram', 'facebook', 'whatsapp', 'tiktok'],
+};
+export function publicationRatio(type: PublicationType, channel: Channel): string {
+  if (!publicationChannels[type].includes(channel)) throw new Error('Canal incompatível com o tipo de publicação.');
+  return type === 'stories' ? '9:16' : channels[channel].ratio;
+}
+export function publicationSelectionValid(type: PublicationType, selected: Channel[]): boolean {
+  return selected.length > 0 && selected.every(channel => publicationChannels[type].includes(channel));
+}
 export const QUALITY_MULTIPLIERS = {
   low: 1,
   medium: 3,
@@ -92,6 +105,11 @@ export const routineSettingsSchema = z
     is_carousel: z.boolean().default(false),
     cta: z.string().default(''),
     destination: destinationSchema.default('feed'),
+    publication_type: publicationTypeSchema.default('feed'),
+  }).refine(settings => publicationSelectionValid(settings.publication_type, settings.channels), {
+    message: 'Canal incompatível com o tipo de publicação.', path: ['channels'],
+  }).refine(settings => settings.publication_type !== 'stories' || settings.destination === 'stories', {
+    message: 'Stories deve utilizar o destino Stories.', path: ['destination'],
   }).transform(settings => ({ ...settings, is_carousel: settings.image_count > 1 && settings.is_carousel }))
   .default({
     image_style: 'Disney / Pixar',
@@ -102,6 +120,7 @@ export const routineSettingsSchema = z
     is_carousel: false,
     cta: '',
     destination: 'feed',
+    publication_type: 'feed',
   });
 
 export const agentSchema = z.object({

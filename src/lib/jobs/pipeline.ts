@@ -15,6 +15,10 @@ import {
   channels,
   contentGenerationQuota,
   MAX_CONTENT_INSTRUCTION_LENGTH,
+  publicationTypeSchema,
+  publicationSelectionValid,
+  publicationRatio,
+  type PublicationType,
   type Agent,
   type Channel,
 } from '@/lib/domain';
@@ -133,7 +137,7 @@ export async function saveImage(
   if (!prompt) throw new Error('invalid_output');
   await renewLease(job);
   const ai = new AIService(job.workspace_id, job.id, agent.id),
-    ratio = channels[variant.channel].ratio;
+    ratio = publicationRatio(publicationTypeSchema.parse(job.payload.publication_type || 'feed'), variant.channel);
 
   const routineSettings = ((agent as unknown as Record<string, unknown>).routine_settings as Record<string, unknown>) || {};
   const selectedStyle = String(
@@ -262,6 +266,7 @@ export async function runPipeline(job: Job) {
       is_carousel: z.boolean().optional(),
       cta: z.string().optional(),
       origin: z.enum(['manual', 'routine']).optional(),
+      publication_type: publicationTypeSchema.optional(),
     })
     .parse(job.payload);
   const db = adminClient();
@@ -306,6 +311,8 @@ export async function runPipeline(job: Job) {
   const selected = (isRoutine && Array.isArray(routineSettings.channels) && routineSettings.channels.length)
     ? (input.channels?.length ? input.channels : (routineSettings.channels as typeof agent.channels))
     : (input.channels || agent.channels);
+  const publicationType: PublicationType = input.publication_type || 'feed';
+  if (!publicationSelectionValid(publicationType, selected)) throw new Error('invalid_input');
   const count = input.image_count ?? (isRoutine ? ((routineSettings.image_count as number) ?? agent.image_count) : agent.image_count);
   const isCarousel = input.is_carousel ?? (isRoutine ? ((routineSettings.is_carousel as boolean) ?? false) : false);
   const cta = isRoutine ? (input.cta || (routineSettings.cta as string) || '') : (input.cta || '');
@@ -458,9 +465,10 @@ export async function runPipeline(job: Job) {
       channels: selected.map((channel) => ({
         channel,
         ...channels[channel],
+        ratio: publicationRatio(publicationType, channel),
         override: agent.channel_settings[channel],
       })),
-      task: `Adapt this ONE strategy to exactly the selected channels. Return exactly ${count} image_prompts per variant.${instruction.trim() && !isRoutine ? ' Every image prompt must depict the specific user instruction in context, including its stated people, actions, setting, objects and text. Do not invent a different scene. The selected reference guides appearance, not the event.' : ''}${input.is_carousel ? ' This post is a CAROUSEL; develop an engaging sequential carousel narrative with strong visual progression across slides. MANDATORY CAROUSEL HOOK: The first image (slide 1 / index 0) MUST visually and compositionally incorporate a clear creative continuation indicator or swipe cue enticing the audience to slide to the next image (e.g., "DESLIZE PARA CONTINUAR →", "ISSO É SÓ O COMEÇO →", "TEM MAIS NO PRÓXIMO →", "ARRASTE PARA O LADO →", "CONTINUA →", "QUER SABER COMO? →", "VEJA O PASSO 2 →", or a directional arrow with a peek of the upcoming element). Slide 1 must explicitly incorporate this creative swipe cue in its prompt composition.' : ''}${input.cta ? ` Strictly include or align the Call to Action (CTA) with: "${input.cta}".` : ''}${input.image_style ? ` The visual style of all image prompts MUST strictly follow: "${input.image_style}".` : ''} Each image_prompt must describe a complete scene tailored specifically to the channel's aspect ratio (${selected.map((c) => `${c}: ${channels[c].ratio}`).join(', ')}). The background and environment must be full-bleed edge-to-edge covering 100% of the canvas with NO outer white border or letterboxing. CRITICAL COMPOSITION RULE: All typography, headlines, sub-headlines, logos, mascots, characters, dialogue bubbles, and CTA buttons must be placed inside the visual safe area (with at least 8% breathing room from all outer edges) so that NO text, characters, or logos are cut off, clipped, or touching any of the canvas borders. Caption must include its CTA and hashtags and fit the specified character limit (CRITICAL: channel 'x' has a strict limit of 280 characters, keep it punchy and short). Preserve visual continuity between carousel images.`,
+      task: `Adapt this ONE strategy to exactly the selected channels. Return exactly ${count} image_prompts per variant.${instruction.trim() && !isRoutine ? ' Every image prompt must depict the specific user instruction in context, including its stated people, actions, setting, objects and text. Do not invent a different scene. The selected reference guides appearance, not the event.' : ''}${input.is_carousel ? ' This post is a CAROUSEL; develop an engaging sequential carousel narrative with strong visual progression across slides. MANDATORY CAROUSEL HOOK: The first image (slide 1 / index 0) MUST visually and compositionally incorporate a clear creative continuation indicator or swipe cue enticing the audience to slide to the next image (e.g., "DESLIZE PARA CONTINUAR →", "ISSO É SÓ O COMEÇO →", "TEM MAIS NO PRÓXIMO →", "ARRASTE PARA O LADO →", "CONTINUA →", "QUER SABER COMO? →", "VEJA O PASSO 2 →", or a directional arrow with a peek of the upcoming element). Slide 1 must explicitly incorporate this creative swipe cue in its prompt composition.' : ''}${input.cta ? ` Strictly include or align the Call to Action (CTA) with: "${input.cta}".` : ''}${input.image_style ? ` The visual style of all image prompts MUST strictly follow: "${input.image_style}".` : ''} Each image_prompt must describe a complete scene tailored specifically to the channel's aspect ratio (${selected.map((c) => `${c}: ${publicationRatio(publicationType, c)}`).join(', ')}). The background and environment must be full-bleed edge-to-edge covering 100% of the canvas with NO outer white border or letterboxing. CRITICAL COMPOSITION RULE: All typography, headlines, sub-headlines, logos, mascots, characters, dialogue bubbles, and CTA buttons must be placed inside the visual safe area (with at least 8% breathing room from all outer edges) so that NO text, characters, or logos are cut off, clipped, or touching any of the canvas borders. Caption must include its CTA and hashtags and fit the specified character limit (CRITICAL: channel 'x' has a strict limit of 280 characters, keep it punchy and short). Preserve visual continuity between carousel images.`,
     });
     raw.variants = raw.variants.map((v) => ({
       ...v,
@@ -486,15 +494,16 @@ export async function runPipeline(job: Job) {
         instruction: input.instruction || (job.payload as Record<string, unknown>)?.instruction || '',
         reference_asset_id: selectedReference?.id || null,
         reference_summary: referenceSummary || null,
+        publication_type: publicationType,
         image_style: input.image_style || (job.payload as Record<string, unknown>)?.image_style || '',
         image_quality: input.image_quality || (job.payload as Record<string, unknown>)?.image_quality || 'low',
         is_carousel: input.is_carousel ?? (job.payload as Record<string, unknown>)?.is_carousel ?? false,
         cta: input.cta || (job.payload as Record<string, unknown>)?.cta || strategy.cta || '',
         destination: isRoutine
           ? (((job.payload as Record<string, unknown>)?.destination as string) || (routineSettings.destination as string) || 'feed')
-          : (((job.payload as Record<string, unknown>)?.destination as string) || ((input as Record<string, unknown>)?.destination as string) || 'feed'),
+          : (((job.payload as Record<string, unknown>)?.destination as string) || publicationType),
       },
-      variants,
+      variants: variants.map(variant => ({ ...variant, aspect_ratio: publicationRatio(publicationType, variant.channel) })),
       approval: agent.approval_required,
     }),
   );

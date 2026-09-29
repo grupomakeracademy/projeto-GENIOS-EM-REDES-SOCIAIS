@@ -113,7 +113,11 @@ export async function publishVariantContent(params: {
 
     const itemStrategy = (item.strategy && typeof item.strategy === 'object' ? item.strategy : {}) as Record<string, unknown>;
     const effectiveDestination = (params.destination || itemStrategy.destination || 'feed') as Destination;
+    if (itemStrategy.publication_type === 'stories' && effectiveDestination !== 'stories')
+      throw new Error('unsupported_capability');
     const caps = connector.capabilities();
+    if (itemStrategy.publication_type === 'stories' && !caps.canPublishStories)
+      throw new Error('unsupported_capability');
     let destinationForChannel: Destination = effectiveDestination;
     if (!caps.canPublishStories) {
       destinationForChannel = 'feed';

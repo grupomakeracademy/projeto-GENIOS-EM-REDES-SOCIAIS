@@ -88,14 +88,17 @@ export function ContentDetail({
   const isDraft = item.status === 'DRAFT';
   const variant = item.content_variants[index];
 
-  const supportedDestinations = variant ? getChannelDestinations(variant.channel as any) : (['feed'] as Destination[]);
+  const generatedAsStories = (item.strategy as Record<string, unknown>)?.publication_type === 'stories';
+  const supportedDestinations: Destination[] = generatedAsStories
+    ? (variant && getChannelDestinations(variant.channel).includes('stories') ? ['stories'] : [])
+    : variant ? getChannelDestinations(variant.channel) : ['feed'];
   const effectiveDestination =
     supportedDestinations.length === 1
-      ? 'feed'
+      ? supportedDestinations[0]
       : destination && supportedDestinations.includes(destination as Destination)
       ? destination
       : '';
-  const isDestinationValid = supportedDestinations.length === 1 || !!effectiveDestination;
+  const isDestinationValid = supportedDestinations.length > 0 && !!effectiveDestination;
 
   // All media items for this variant and position, sorted chronologically / by version
   const positionMedias = (variant?.content_media || [])
@@ -147,6 +150,7 @@ export function ContentDetail({
           agent_id: item.agent_id,
           instruction: String(strategy.instruction || item.topic || '').trim(),
           channels: item.content_variants.map((v) => v.channel),
+          publication_type: strategy.publication_type === 'stories' ? 'stories' : 'feed',
           image_count: count,
           image_style: String(strategy.image_style || 'Disney / Pixar'),
           image_quality: strategy.image_quality === 'medium' ? 'medium' : 'low',
@@ -540,6 +544,7 @@ export function ContentDetail({
                             </button>
                           ))}
                         </div>
+                        {generatedAsStories && !supportedDestinations.length && <p className="muted">Esta integração não publica Stories neste canal. O arquivo vertical pode ser utilizado manualmente.</p>}
                       </div>
 
                       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>

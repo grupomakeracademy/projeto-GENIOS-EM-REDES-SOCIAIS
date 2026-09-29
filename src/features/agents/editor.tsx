@@ -33,10 +33,12 @@ import {
   type Destination,
   destinations,
   getChannelsDestinations,
+  publicationChannels,
+  publicationRatio,
+  type PublicationType,
 } from '@/lib/domain';
 import { useLocale } from '@/components/ui';
 
-const ALL_ROUTINE_CHANNELS: Channel[] = ['instagram', 'facebook', 'whatsapp', 'tiktok', 'x', 'linkedin'];
 const ROUTINE_IMAGE_STYLES = [
   'Disney / Pixar',
   '3D Cartoon Moderno',
@@ -335,9 +337,13 @@ export function AgentEditor({
     (initialRs.instruction as string) || '',
   );
   const [routineChannels, setRoutineChannels] = useState<Channel[]>(
-    Array.isArray(initialRs.channels) && initialRs.channels.length
+    (Array.isArray(initialRs.channels) && initialRs.channels.length
       ? (initialRs.channels as Channel[])
-      : (selected?.channels?.length ? selected.channels : ['instagram']),
+      : (selected?.channels?.length ? selected.channels : (['instagram'] as Channel[])))
+      .filter(channel => publicationChannels[initialRs.publication_type === 'stories' ? 'stories' : 'feed'].includes(channel)),
+  );
+  const [routinePublicationType, setRoutinePublicationType] = useState<PublicationType>(
+    initialRs.publication_type === 'stories' ? 'stories' : 'feed',
   );
   const [routineQuality, setRoutineQuality] = useState<'low' | 'medium'>(
     (initialRs.image_quality as 'low' | 'medium') || 'low',
@@ -358,12 +364,14 @@ export function AgentEditor({
   );
 
   // Dynamic destinations based on selected channels
-  const supportedRoutineDestinations = getChannelsDestinations(routineChannels);
+  const supportedRoutineDestinations: Destination[] = routinePublicationType === 'stories'
+    ? ['stories']
+    : getChannelsDestinations(routineChannels).filter(destination => destination !== 'stories');
   useEffect(() => {
     if (!supportedRoutineDestinations.includes(routineDestination)) {
-      setRoutineDestination('feed');
+      setRoutineDestination(routinePublicationType);
     }
-  }, [supportedRoutineDestinations, routineDestination]);
+  }, [supportedRoutineDestinations, routineDestination, routinePublicationType]);
 
   // Prompt Mágico state for Card 3
   const [routinePautaBusy, setRoutinePautaBusy] = useState(false);
@@ -380,9 +388,11 @@ export function AgentEditor({
     setRoutineInstruction((rs.instruction as string) || '');
     setRoutineChannels(
       Array.isArray(rs.channels) && rs.channels.length
-        ? (rs.channels as Channel[])
-        : (selected.channels?.length ? selected.channels : ['instagram']),
+        ? (rs.channels as Channel[]).filter(channel => publicationChannels[rs.publication_type === 'stories' ? 'stories' : 'feed'].includes(channel))
+        : (selected.channels?.length ? selected.channels : (['instagram'] as Channel[]))
+          .filter(channel => publicationChannels[rs.publication_type === 'stories' ? 'stories' : 'feed'].includes(channel)),
     );
+    setRoutinePublicationType(rs.publication_type === 'stories' ? 'stories' : 'feed');
     setRoutineQuality((rs.image_quality as 'low' | 'medium') || 'low');
     setRoutineCount(
       typeof rs.image_count === 'number'
@@ -499,6 +509,7 @@ export function AgentEditor({
                   agent_id: selected.id,
                   instruction: routineInstruction,
                   channels: routineChannels,
+                  publication_type: routinePublicationType,
                   image_count: routineCount,
                   image_style: routineStyle,
                   image_quality: routineQuality,
@@ -1075,6 +1086,19 @@ export function AgentEditor({
                         </div>
                       </div>
 
+                      <div className="new-content-field">
+                        <label className="new-content-label">Tipo de publicação</label>
+                        <div className="quality-segmented-control" role="group" aria-label="Tipo de publicação da rotina">
+                          {(['feed', 'stories'] as const).map(type => <button key={type} type="button" disabled={!canEdit}
+                            className={`quality-pill ${routinePublicationType === type ? 'active' : ''}`}
+                            onClick={() => {
+                              setRoutinePublicationType(type);
+                              setRoutineChannels(previous => previous.filter(channel => publicationChannels[type].includes(channel)));
+                              setRoutineDestination(type);
+                            }}>{type === 'feed' ? 'Feed' : 'Stories'}</button>)}
+                        </div>
+                      </div>
+
                       {/* Canais de publicação */}
                       <div className="new-content-field">
                         <div className="channel-section-header">
@@ -1084,7 +1108,7 @@ export function AgentEditor({
                           </p>
                         </div>
                         <div className="new-content-channels-grid">
-                          {ALL_ROUTINE_CHANNELS.map((ch) => {
+                          {publicationChannels[routinePublicationType].map((ch) => {
                             const isChecked = routineChannels.includes(ch);
                             return (
                               <div
@@ -1122,7 +1146,7 @@ export function AgentEditor({
                                 </div>
                                 <div className="channel-card-info">
                                   <strong className="channel-card-name">{channels[ch].name}</strong>
-                                  <span className="channel-card-ratio">{channels[ch].ratio}</span>
+                                  <span className="channel-card-ratio">{ch === 'whatsapp' && routinePublicationType === 'stories' ? 'Status · ' : ''}{publicationRatio(routinePublicationType, ch)}</span>
                                 </div>
                                 <div className={`channel-card-checkbox ${isChecked ? 'checked' : ''}`}>
                                   {isChecked && <Check size={14} strokeWidth={3} />}
@@ -1320,6 +1344,7 @@ export function AgentEditor({
                               is_carousel: routineCount > 1 && routineIsCarousel,
                               cta: routineCta,
                               destination: routineDestination,
+                              publication_type: routinePublicationType,
                             }
                           : ((selected.routine_settings as Record<string, unknown>) || {});
 

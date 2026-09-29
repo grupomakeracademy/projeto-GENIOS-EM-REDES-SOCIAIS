@@ -80,6 +80,7 @@ beforeAll(async () => {
     '202609150003_import_caption_save.sql',
     '202609150004_import_carousel.sql',
     '202609240001_import_video_and_events.sql',
+    '202609290001_publication_type_aspect_ratio.sql',
   ]) {
     const sql = await readFile(
       new URL(`../supabase/migrations/${filename}`, import.meta.url),
@@ -518,6 +519,28 @@ it('finalizes one MP4 with original dimensions and safely replaces only an unfin
  await expect(db.query("select replace_import_video($1,$2,$3,$4,$5)",[wa,A,id,media.storage_path,JSON.stringify(media)])).rejects.toThrow('import_images_locked');
  const created=(await db.query<{metadata:{status:string}}>("select metadata from content_events where content_id=$1 and event='CREATED'",[c])).rows[0];
  expect(created.metadata.status).toBe('APPROVED');
+});
+
+it('persists Stories at 9:16 and rejects incompatible channels in the database', async () => {
+  const makeJob = async (id: string, token: string) => {
+    await db.query(`insert into background_jobs(id,workspace_id,type,status,payload,lock_token,lease_until,idempotency_key)
+      values($1,$2,'agent_run','RUNNING',$3,$4,now()+interval '5 minutes',$5)`,
+      [id, wa, JSON.stringify({ agent_id: agentA }), token, `story-${id}`]);
+  };
+  const storyId = randomUUID(), storyToken = randomUUID();
+  await makeJob(storyId, storyToken);
+  const variant = { channel: 'instagram', title: 'Story', caption: 'Legenda', hashtags: [], cta: '',
+    visual_concept: 'Cena vertical', image_prompts: ['Cena vertical'], aspect_ratio: '9:16' };
+  await db.query('select persist_generated($1,$2,$3,$4,$5,$6,true)',
+    [wa, agentA, storyId, storyToken, JSON.stringify({ topic: 'Story', publication_type: 'stories' }), JSON.stringify([variant])]);
+  const stored = await db.query<{aspect_ratio:string}>('select aspect_ratio from content_variants where content_id=$1', [storyId]);
+  expect(stored.rows[0].aspect_ratio).toBe('9:16');
+
+  const invalidId = randomUUID(), invalidToken = randomUUID();
+  await makeJob(invalidId, invalidToken);
+  await expect(db.query('select persist_generated($1,$2,$3,$4,$5,$6,true)',
+    [wa, agentA, invalidId, invalidToken, JSON.stringify({ topic: 'Inválido', publication_type: 'stories' }),
+      JSON.stringify([{ ...variant, channel: 'linkedin' }])])).rejects.toThrow('invalid_publication_selection');
 });
 it('database rejects mixing images and videos in one import',async()=>{
  const id=randomUUID(),path=`workspace/${wa}/imports/${id}/original.mp4`;

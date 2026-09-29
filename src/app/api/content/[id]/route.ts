@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { guard, checked, fail, AppError } from '@/lib/security/context';
 import { adminClient } from '@/lib/supabase/server';
-import { channels, channelSchema, type Channel, destinationSchema, MAX_CONTENT_INSTRUCTION_LENGTH } from '@/lib/domain';
+import { channels, channelSchema, type Channel, destinationSchema, publicationTypeSchema, publicationSelectionValid, publicationRatio, MAX_CONTENT_INSTRUCTION_LENGTH } from '@/lib/domain';
 import { requireAgent } from '@/lib/security/agent';
 import { requireSelectedReference } from '@/lib/ai/selected-reference';
 import { publishVariantContent } from '@/lib/social/publisher';
@@ -238,11 +238,16 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         cta: z.string().max(500).optional(),
         reference_asset_id: z.uuid().nullable().optional(),
         channels: z.array(channelSchema).min(1),
+        publication_type: publicationTypeSchema.default('feed'),
         image_count: z.number().int().min(1).max(6).default(2),
         destination: destinationSchema.optional(),
         status: z.enum(['DRAFT']).default('DRAFT'),
       })
       .parse(raw);
+    if (!publicationSelectionValid(body.publication_type, body.channels))
+      throw new AppError('Canal incompatível com o tipo de publicação.', 400);
+    if (body.publication_type === 'stories' && body.destination && body.destination !== 'stories')
+      throw new AppError('Stories deve utilizar o destino Stories.', 400);
 
     if (body.image_count <= 1) {
       body.is_carousel = false;
@@ -273,10 +278,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       is_carousel: body.image_count >= 2 ? (body.is_carousel ?? false) : false,
       cta: body.cta || '',
       channels: body.channels,
+      publication_type: body.publication_type,
       image_count: body.image_count,
       instruction: body.instruction.trim(),
       reference_asset_id: body.reference_asset_id || null,
-      destination: body.destination || existingStrat.destination || 'feed',
+      destination: body.publication_type === 'stories' ? 'stories' :
+        (body.destination || (existingStrat.publication_type === body.publication_type ? existingStrat.destination : 'feed') || 'feed'),
     };
 
     const { error: updateErr } = await db
@@ -311,7 +318,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
           title: topic.slice(0, 120),
           caption: '',
           cta: body.cta || '',
-          aspect_ratio: channels[ch]?.ratio || '4:5',
+          aspect_ratio: publicationRatio(body.publication_type, ch),
           image_prompts: [],
         },
         { onConflict: 'content_id,channel' },

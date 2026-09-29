@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { contentList } from '@/features/content/queries';
 import { guard, fail, AppError } from '@/lib/security/context';
-import { channels, channelSchema, MAX_CONTENT_INSTRUCTION_LENGTH } from '@/lib/domain';
+import { channelSchema, publicationTypeSchema, publicationSelectionValid, publicationRatio, MAX_CONTENT_INSTRUCTION_LENGTH } from '@/lib/domain';
 import { requireAgent } from '@/lib/security/agent';
 import { adminClient } from '@/lib/supabase/server';
 import { requireSelectedReference } from '@/lib/ai/selected-reference';
@@ -30,10 +30,13 @@ export async function POST(request: Request) {
         cta: z.string().max(500).optional(),
         reference_asset_id: z.uuid().nullable().optional(),
         channels: z.array(channelSchema).min(1),
+        publication_type: publicationTypeSchema.default('feed'),
         image_count: z.number().int().min(1).max(6).default(2),
         status: z.enum(['DRAFT']).default('DRAFT'),
       })
       .parse(raw);
+    if (!publicationSelectionValid(body.publication_type, body.channels))
+      throw new AppError('Canal incompatível com o tipo de publicação.', 400);
 
     await requireAgent(ctx, body.agent_id);
     await requireSelectedReference(ctx.workspaceId, body.agent_id, body.reference_asset_id || undefined);
@@ -49,6 +52,8 @@ export async function POST(request: Request) {
       is_carousel: body.image_count >= 2 ? (body.is_carousel ?? false) : false,
       cta: body.cta || '',
       channels: body.channels,
+      publication_type: body.publication_type,
+      destination: body.publication_type,
       image_count: body.image_count,
       instruction: body.instruction.trim(),
       reference_asset_id: body.reference_asset_id || null,
@@ -80,7 +85,7 @@ export async function POST(request: Request) {
       title: topic.slice(0, 120),
       caption: '',
       cta: body.cta || '',
-      aspect_ratio: channels[ch]?.ratio || '4:5',
+      aspect_ratio: publicationRatio(body.publication_type, ch),
       image_prompts: [],
     }));
 
