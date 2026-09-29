@@ -90,6 +90,19 @@ test('formulário limita pauta, reaproveita referência e preserva rascunho', as
         .eq('status', 'DRAFT').eq('created_by', userId!).limit(1).maybeSingle();
       return result.data?.strategy?.reference_asset_id;
     }).toBe(assetId);
+
+    expect((await db.from('profiles').update({ content_quota_balance: 1 }).eq('id', userId)).error).toBeNull();
+    const denied = await page.evaluate(async ({ agentId, assetId }) => {
+      const response = await fetch('/api/runs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_id: agentId, reference_asset_id: assetId, instruction: 'Teste de saldo',
+          channels: ['instagram'], image_count: 1, image_quality: 'low', idempotency_key: crypto.randomUUID() }) });
+      return response.status;
+    }, { agentId: agent.data!.id, assetId });
+    expect(denied).toBe(400);
+    const jobs = await db.from('background_jobs').select('id').eq('workspace_id', workspaceId);
+    expect(jobs.data).toEqual([]);
+    const balance = await db.from('profiles').select('content_quota_balance').eq('id', userId).single();
+    expect(balance.data!.content_quota_balance).toBe(1);
   } finally {
     if (storagePath) await db.storage.from('brand-assets').remove([storagePath]);
     if (workspaceId) await db.from('workspaces').delete().eq('id', workspaceId);
