@@ -13,6 +13,8 @@ import {
   validateVariants,
   fitCaptionToLimit,
   channels,
+  contentGenerationQuota,
+  MAX_CONTENT_INSTRUCTION_LENGTH,
   type Agent,
   type Channel,
 } from '@/lib/domain';
@@ -23,6 +25,7 @@ import {
   getExactAssetPolicy,
 } from '@/lib/ai/asset-knowledge';
 import { saveCompositedImage } from './save-composited-image';
+import { requireSelectedReference } from '@/lib/ai/selected-reference';
 import { NO_LOGO_INSTRUCTION, suppressVisualBranding, type ExactLogoPolicy } from '@/lib/ai/image-logo-policy';
 export const jobSchema = z.object({
   id: z.uuid(),
@@ -64,6 +67,8 @@ export function buildImagePromptContext(params: {
   visualKnowledge?: string;
   exactAssetGuidance?: string;
   exactLogoPolicy?: ExactLogoPolicy;
+  instruction?: string;
+  selectedReferenceSummary?: string;
 }) {
   const hasExactLogoGuidance = params.exactLogoPolicy?.hasExactLogoAsset === true;
   const names = [...(params.exactLogoPolicy?.brandNames || []), params.companyOrName || ''];
@@ -85,7 +90,12 @@ export function buildImagePromptContext(params: {
 
   return JSON.stringify({
     image_generation_policy: hasExactLogoGuidance ? { logoGenerationForbidden: true, instruction: NO_LOGO_INSTRUCTION } : undefined,
+    instruction_hierarchy: params.instruction?.trim()
+      ? 'Technical and safety rules first. The specific instruction defines what happens in this image. The selected reference and agent DNA guide appearance and brand identity only. Do not replace the requested event with an older or generic scene.'
+      : undefined,
+    specific_instruction: params.instruction?.trim() || undefined,
     scene,
+    selected_reference_visual_guidance: clean(params.selectedReferenceSummary) || undefined,
     style: styleSummary || undefined,
     aspect_ratio: params.ratio,
     channel: params.channel,
@@ -145,7 +155,13 @@ export async function saveImage(
     }
   }
 
-  const visualKnowledge = await getAgentVisualKnowledge(agent);
+  const referenceAssetId = typeof job.payload.reference_asset_id === 'string' ? job.payload.reference_asset_id : undefined;
+  const selectedReference = await requireSelectedReference(job.workspace_id, agent.id, referenceAssetId);
+  const selectedReferenceSummary = selectedReference
+    ? String(job.payload.reference_summary || selectedReference.summary_text)
+    : undefined;
+  const visualKnowledge = await getAgentVisualKnowledge(agent, selectedReference
+    ? { id: selectedReference.id, summary: selectedReferenceSummary! } : undefined);
   const exactLogoPolicy = await getExactAssetPolicy(agent);
   const exactAssetGuidance = exactLogoPolicy.guidance;
   const visualReferences = await selectSceneVisualReferences({
@@ -155,6 +171,15 @@ export async function saveImage(
     position,
     workspaceId: job.workspace_id,
   });
+  if (selectedReference) {
+    const download = await db.storage.from('brand-assets').download(selectedReference.storage_path);
+    if (download.error || !download.data) throw new Error('storage_download_failed');
+    visualReferences.unshift({
+      mimeType: selectedReference.mime_type,
+      data: Buffer.from(await download.data.arrayBuffer()).toString('base64'),
+      assetId: selectedReference.id,
+    });
+  }
 
   const imagePromptContext = buildImagePromptContext({
     prompt,
@@ -166,6 +191,8 @@ export async function saveImage(
     visualKnowledge: visualKnowledge || undefined,
     exactAssetGuidance: exactAssetGuidance || undefined,
     exactLogoPolicy,
+    instruction: job.payload.origin === 'manual' ? String(job.payload.instruction || '') : undefined,
+    selectedReferenceSummary,
   });
 
   // Automated scene reference: 0 when possible, strictly 1 master when character is in scene, NEVER ALL
@@ -227,6 +254,7 @@ export async function runPipeline(job: Job) {
     .object({
       agent_id: z.uuid(),
       instruction: z.string().default(''),
+      reference_asset_id: z.uuid().optional(),
       channels: z.array(channelSchema).min(1).optional(),
       image_count: z.number().int().min(0).max(20).optional(),
       image_style: z.string().optional(),
@@ -268,6 +296,7 @@ export async function runPipeline(job: Job) {
 
   const routineSettings = ((agent as unknown as Record<string, unknown>).routine_settings as Record<string, unknown>) || {};
   const instruction = isRoutine ? (input.instruction || (routineSettings.instruction as string) || '') : input.instruction;
+  if (!isRoutine && instruction.length > MAX_CONTENT_INSTRUCTION_LENGTH) throw new Error('invalid_input');
   const imageStyle = isRoutine
     ? (input.image_style || (routineSettings.image_style as string) || String(agent.visual_settings?.style || '').trim() || 'Disney / Pixar')
     : input.image_style;
@@ -295,8 +324,7 @@ export async function runPipeline(job: Job) {
   }
 
   // Pre-validate quota before processing
-  const qualityMultiplier = imageQuality === 'medium' || imageQuality === 'high' ? 3 : 1;
-  const requiredQuota = count * selected.length * qualityMultiplier;
+  const requiredQuota = contentGenerationQuota(count, selected.length, imageQuality, Boolean(input.reference_asset_id));
 
   let titleLanguage = String(job.payload.title_language || 'pt-BR');
   if (billingUserId) {
@@ -328,6 +356,10 @@ export async function runPipeline(job: Job) {
     checked(await db.from('agent_runs').update({ checkpoint: cache }).eq('job_id', job.id));
   }
   await stage('LOAD_CONTEXT');
+  const selectedReference = await requireSelectedReference(job.workspace_id, agent.id, input.reference_asset_id);
+  const referenceSummary = selectedReference
+    ? String(job.payload.reference_summary || selectedReference.summary_text)
+    : undefined;
   const memory = checked(
     await db
       .from('editorial_memory')
@@ -343,6 +375,7 @@ export async function runPipeline(job: Job) {
       agent: { ...agent, channels: selected },
       editorial_memory: memory,
       instruction,
+      selected_reference_visual_guidance: referenceSummary,
       image_style: imageStyle,
       is_carousel: isCarousel,
       cta,
@@ -361,6 +394,8 @@ export async function runPipeline(job: Job) {
         : [],
     );
   await stage('TOPIC_DISCOVERY');
+  if (!cache.topics && instruction.trim() && !isRoutine)
+    await save('topics', { topics: [{ topic: instruction, angle: 'Representar fielmente a pauta específica do usuário.' }] });
   if (!cache.topics)
     await save(
       'topics',
@@ -387,7 +422,7 @@ export async function runPipeline(job: Job) {
       const strategy = await ai.text('orchestrator', strategySchema, {
         context: cache.context,
         sources: cache.sources,
-        task: `Create one central strategy.${input.cta ? ` Align the call to action with: "${input.cta}".` : ''}${input.is_carousel ? ' Structure as a cohesive carousel storyline.' : ''} Source references must be a subset of supplied source URLs; use an empty array when no research was performed.`,
+        task: `Create one central strategy.${instruction.trim() && !isRoutine ? ' The specific user instruction defines the exact subject, action, people and setting. Preserve it faithfully; do not replace it with a generic topic or a past scene. Agent context defines brand and style only.' : ''}${input.cta ? ` Align the call to action with: "${input.cta}".` : ''}${input.is_carousel ? ' Structure as a cohesive carousel storyline.' : ''} Source references must be a subset of supplied source URLs; use an empty array when no research was performed.`,
         topic,
       });
       const allowed = new Set((cache.sources as { url: string }[]).map((s) => s.url));
@@ -401,7 +436,7 @@ export async function runPipeline(job: Job) {
           threshold: 0.88,
         }),
       );
-      if (!similar?.length) {
+      if (!similar?.length || (instruction.trim() && !isRoutine)) {
         await save('embedding', vector);
         await save('strategy', strategy);
         break;
@@ -425,7 +460,7 @@ export async function runPipeline(job: Job) {
         ...channels[channel],
         override: agent.channel_settings[channel],
       })),
-      task: `Adapt this ONE strategy to exactly the selected channels. Return exactly ${count} image_prompts per variant.${input.is_carousel ? ' This post is a CAROUSEL; develop an engaging sequential carousel narrative with strong visual progression across slides. MANDATORY CAROUSEL HOOK: The first image (slide 1 / index 0) MUST visually and compositionally incorporate a clear creative continuation indicator or swipe cue enticing the audience to slide to the next image (e.g., "DESLIZE PARA CONTINUAR →", "ISSO É SÓ O COMEÇO →", "TEM MAIS NO PRÓXIMO →", "ARRASTE PARA O LADO →", "CONTINUA →", "QUER SABER COMO? →", "VEJA O PASSO 2 →", or a directional arrow with a peek of the upcoming element). Slide 1 must explicitly incorporate this creative swipe cue in its prompt composition.' : ''}${input.cta ? ` Strictly include or align the Call to Action (CTA) with: "${input.cta}".` : ''}${input.image_style ? ` The visual style of all image prompts MUST strictly follow: "${input.image_style}".` : ''} Each image_prompt must describe a complete scene tailored specifically to the channel's aspect ratio (${selected.map((c) => `${c}: ${channels[c].ratio}`).join(', ')}). The background and environment must be full-bleed edge-to-edge covering 100% of the canvas with NO outer white border or letterboxing. CRITICAL COMPOSITION RULE: All typography, headlines, sub-headlines, logos, mascots, characters, dialogue bubbles, and CTA buttons must be placed inside the visual safe area (with at least 8% breathing room from all outer edges) so that NO text, characters, or logos are cut off, clipped, or touching any of the canvas borders. Caption must include its CTA and hashtags and fit the specified character limit (CRITICAL: channel 'x' has a strict limit of 280 characters, keep it punchy and short). Preserve visual continuity between carousel images.`,
+      task: `Adapt this ONE strategy to exactly the selected channels. Return exactly ${count} image_prompts per variant.${instruction.trim() && !isRoutine ? ' Every image prompt must depict the specific user instruction in context, including its stated people, actions, setting, objects and text. Do not invent a different scene. The selected reference guides appearance, not the event.' : ''}${input.is_carousel ? ' This post is a CAROUSEL; develop an engaging sequential carousel narrative with strong visual progression across slides. MANDATORY CAROUSEL HOOK: The first image (slide 1 / index 0) MUST visually and compositionally incorporate a clear creative continuation indicator or swipe cue enticing the audience to slide to the next image (e.g., "DESLIZE PARA CONTINUAR →", "ISSO É SÓ O COMEÇO →", "TEM MAIS NO PRÓXIMO →", "ARRASTE PARA O LADO →", "CONTINUA →", "QUER SABER COMO? →", "VEJA O PASSO 2 →", or a directional arrow with a peek of the upcoming element). Slide 1 must explicitly incorporate this creative swipe cue in its prompt composition.' : ''}${input.cta ? ` Strictly include or align the Call to Action (CTA) with: "${input.cta}".` : ''}${input.image_style ? ` The visual style of all image prompts MUST strictly follow: "${input.image_style}".` : ''} Each image_prompt must describe a complete scene tailored specifically to the channel's aspect ratio (${selected.map((c) => `${c}: ${channels[c].ratio}`).join(', ')}). The background and environment must be full-bleed edge-to-edge covering 100% of the canvas with NO outer white border or letterboxing. CRITICAL COMPOSITION RULE: All typography, headlines, sub-headlines, logos, mascots, characters, dialogue bubbles, and CTA buttons must be placed inside the visual safe area (with at least 8% breathing room from all outer edges) so that NO text, characters, or logos are cut off, clipped, or touching any of the canvas borders. Caption must include its CTA and hashtags and fit the specified character limit (CRITICAL: channel 'x' has a strict limit of 280 characters, keep it punchy and short). Preserve visual continuity between carousel images.`,
     });
     raw.variants = raw.variants.map((v) => ({
       ...v,
@@ -449,6 +484,8 @@ export async function runPipeline(job: Job) {
       s: {
         ...strategy,
         instruction: input.instruction || (job.payload as Record<string, unknown>)?.instruction || '',
+        reference_asset_id: selectedReference?.id || null,
+        reference_summary: referenceSummary || null,
         image_style: input.image_style || (job.payload as Record<string, unknown>)?.image_style || '',
         image_quality: input.image_quality || (job.payload as Record<string, unknown>)?.image_quality || 'low',
         is_carousel: input.is_carousel ?? (job.payload as Record<string, unknown>)?.is_carousel ?? false,
@@ -549,13 +586,16 @@ export async function runPipeline(job: Job) {
           quality: imageQuality,
           channels: selected,
           image_count: count,
+          reference_asset_id: selectedReference?.id || null,
         },
       });
+      if (deductRes.error || !deductRes.data?.success) throw new Error('insufficient_quota');
       if (deductRes?.data?.balance !== undefined) {
         console.log(`[Quota] Debited ${requiredQuota} quotas. New balance: ${deductRes.data.balance}`);
       }
     } catch (quotaErr) {
       console.error('[Quota] Error debiting quota:', quotaErr);
+      throw quotaErr;
     }
   }
 

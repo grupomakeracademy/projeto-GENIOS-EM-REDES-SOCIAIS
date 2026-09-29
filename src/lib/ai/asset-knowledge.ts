@@ -188,6 +188,7 @@ export async function processAssetKnowledge(
         .from('assets')
         .select('textual_interpretation, summary_text, processor_model, processing_version')
         .eq('content_hash', hash)
+        .eq('workspace_id', asset.workspace_id)
         .eq('processing_status', 'processed')
         .not('summary_text', 'is', null)
         .neq('id', asset.id)
@@ -406,14 +407,16 @@ export async function processAssetKnowledge(
  * Returns a rich textual context block to be injected into the prompt,
  * guaranteeing 0 vision token consumption during normal image generation.
  */
-export async function getAgentVisualKnowledge(agent: Agent): Promise<string> {
+export async function getAgentVisualKnowledge(agent: Agent, selectedReference?: { id: string; summary: string }): Promise<string> {
   const rawIds = Array.isArray(agent.visual_settings?.reference_ids)
     ? (agent.visual_settings.reference_ids as string[]).filter(
         (id) => typeof id === 'string' && /^[0-9a-f-]{36}$/i.test(id),
       )
     : [];
 
-  const ids = rawIds.slice(0, 10);
+  const ids = selectedReference
+    ? [selectedReference.id, ...rawIds.filter(id => id !== selectedReference.id).slice(0, 9)]
+    : rawIds.slice(0, 10);
   if (!ids.length) return '';
 
   const db = adminClient();
@@ -430,6 +433,7 @@ export async function getAgentVisualKnowledge(agent: Agent): Promise<string> {
   let hasExact = false;
 
   for (const a of assets) {
+    if (selectedReference && a.category === 'reference' && a.id !== selectedReference.id) continue;
     if (a.category === 'exact_asset') {
       hasExact = true;
       validSummaries.push(
@@ -441,7 +445,8 @@ export async function getAgentVisualKnowledge(agent: Agent): Promise<string> {
         `• [IDENTIDADE PROTEGIDA (${role}) - ${a.identity_name || a.name}]: ${a.summary_text || 'Identidade visual cadastrada para uso na cena.'}`,
       );
     } else if (a.summary_text && a.processing_status === 'processed') {
-      validSummaries.push(`• [REFERÊNCIA DE ESTILO - ${a.name}]: ${a.summary_text}`);
+      const summary = selectedReference && a.id === selectedReference.id ? selectedReference.summary : a.summary_text;
+      validSummaries.push(`• [REFERÊNCIA DE ESTILO - ${a.name}]: ${summary}`);
     }
   }
 

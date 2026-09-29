@@ -24,9 +24,12 @@ import {
   type Content,
   type Channel,
   QUALITY_MULTIPLIERS,
+  MAX_CONTENT_INSTRUCTION_LENGTH,
 } from '@/lib/domain';
 
 const ALL_CHANNELS: Channel[] = ['instagram', 'facebook', 'whatsapp', 'tiktok', 'x', 'linkedin'];
+type VisualReference = { id: string; name: string; url?: string; summary_text: string };
+const instructionLimitMessage = 'A pauta deve ter no máximo 2.000 caracteres.';
 
 export function ContentFormModal({
   open,
@@ -54,6 +57,12 @@ export function ContentFormModal({
   const [imageStyle, setImageStyle] = useState('Disney / Pixar');
   const [imageQuality, setImageQuality] = useState<'low' | 'medium'>('low');
   const [instruction, setInstruction] = useState('');
+  const [instructionError, setInstructionError] = useState('');
+  const [references, setReferences] = useState<VisualReference[]>([]);
+  const [referenceAssetId, setReferenceAssetId] = useState('');
+  const [referenceSummary, setReferenceSummary] = useState('');
+  const [referenceBusy, setReferenceBusy] = useState(false);
+  const [referenceError, setReferenceError] = useState('');
   const [imageCount, setImageCount] = useState(2);
   const [isCarousel, setIsCarousel] = useState(true);
   const [cta, setCta] = useState('');
@@ -78,6 +87,8 @@ export function ContentFormModal({
       setImageQuality(q === 'medium' ? 'medium' : 'low');
       const inst = String(strategy.instruction || (draftItem.topic !== 'Novo rascunho de conteúdo' ? draftItem.topic : '') || '');
       setInstruction(inst);
+      setInstructionError(inst.length > MAX_CONTENT_INSTRUCTION_LENGTH ? instructionLimitMessage : '');
+      setReferenceAssetId(String(strategy.reference_asset_id || ''));
       const count = Number(strategy.image_count) || 1;
       setImageCount(count);
       setIsCarousel(count >= 2 ? Boolean(strategy.is_carousel) : false);
@@ -90,6 +101,8 @@ export function ContentFormModal({
       setImageStyle('Disney / Pixar');
       setImageQuality(defaultImageQuality === 'medium' ? 'medium' : 'low');
       setInstruction('');
+      setInstructionError('');
+      setReferenceAssetId('');
       setImageCount(2);
       setIsCarousel(true);
       setCta('');
@@ -99,8 +112,89 @@ export function ContentFormModal({
     setPautaBusy(false);
     setCtaBusy(false);
     setMagicError('');
+    setReferenceError('');
+    setReferenceSummary('');
+    setReferences([]);
     setSavingDraft(false);
   }, [open, draftItem, agents, defaultImageQuality]);
+
+  useEffect(() => {
+    if (!open || !selected) return;
+    let active = true;
+    void api(`assets?agent_id=${encodeURIComponent(selected)}`).then((res) => {
+      if (active) {
+        const items = (res.items || []) as VisualReference[];
+        setReferences(items);
+        const draftReferenceId = String(((draftItem?.strategy as Record<string, unknown>) || {}).reference_asset_id || '');
+        if (draftReferenceId) setReferenceSummary(items.find(item => item.id === draftReferenceId)?.summary_text || '');
+      }
+    }).catch((e) => {
+      if (active) setReferenceError(e instanceof Error ? e.message : 'Não foi possível carregar as referências.');
+    });
+    return () => { active = false; };
+  }, [open, selected, draftItem]);
+
+  const selectedReference = references.find((item) => item.id === referenceAssetId);
+  const referenceDescriptionUnsaved = Boolean(selectedReference && referenceSummary.trim() !== selectedReference.summary_text);
+
+  function updateInstruction(value: string) {
+    if (value.length > MAX_CONTENT_INSTRUCTION_LENGTH) {
+      setInstructionError(instructionLimitMessage);
+      return;
+    }
+    setInstruction(value);
+    setInstructionError('');
+  }
+
+  async function uploadReference(file: File) {
+    if (referenceBusy) return;
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) ||
+        !/\.(png|jpe?g|webp)$/i.test(file.name) || file.size === 0 || file.size > 10 * 1024 * 1024) {
+      setReferenceError('Envie uma imagem PNG, JPG ou WebP válida de até 10 MB.');
+      return;
+    }
+    setReferenceBusy(true);
+    setReferenceError('');
+    try {
+      const data = new FormData();
+      data.set('file', file);
+      data.set('category', 'reference');
+      data.set('source', 'content_reference');
+      const uploaded = await api('assets', 'POST', data);
+      await api('assets', 'PATCH', { action: 'process', id: uploaded.id });
+      await api('assets', 'PATCH', { action: 'associate', id: uploaded.id, agent_ids: [selected] });
+      const result = await api(`assets?agent_id=${encodeURIComponent(selected)}`);
+      const items = (result.items || []) as VisualReference[];
+      const added = items.find(item => item.id === uploaded.id);
+      if (!added) throw new Error('A referência foi salva, mas não pôde ser carregada. Reabra o formulário.');
+      setReferences(items);
+      setReferenceAssetId(added.id);
+      setReferenceSummary(added.summary_text);
+    } catch (e) {
+      setReferenceError(e instanceof Error ? e.message : 'Não foi possível preparar a referência.');
+    } finally {
+      setReferenceBusy(false);
+    }
+  }
+
+  async function saveReferenceSummary() {
+    if (!selectedReference || !referenceSummary.trim() || referenceBusy) return;
+    setReferenceBusy(true);
+    setReferenceError('');
+    try {
+      const result = await api('assets', 'PATCH', {
+        action: 'update_summary', id: selectedReference.id, agent_id: selected,
+        summary_text: referenceSummary.trim(),
+      });
+      setReferences(prev => prev.map(item => item.id === selectedReference.id
+        ? { ...item, summary_text: result.summary_text } : item));
+      setReferenceSummary(result.summary_text);
+    } catch (e) {
+      setReferenceError(e instanceof Error ? e.message : 'Não foi possível salvar a descrição.');
+    } finally {
+      setReferenceBusy(false);
+    }
+  }
 
   const isCarouselDisabled = imageCount <= 1;
 
@@ -123,7 +217,8 @@ export function ContentFormModal({
         agent_id: selected,
       });
       if (res?.refinedText) {
-        setInstruction(res.refinedText);
+        if (res.refinedText.length > MAX_CONTENT_INSTRUCTION_LENGTH) throw new Error(instructionLimitMessage);
+        updateInstruction(res.refinedText);
         setPautaMagicUsed(true);
       }
     } catch (e) {
@@ -155,13 +250,14 @@ export function ContentFormModal({
   }
 
   async function handleSaveDraft() {
-    if (savingDraft || action.busy || !selected || selectedChannels.length === 0) return;
+    if (savingDraft || action.busy || referenceBusy || referenceDescriptionUnsaved || instructionError || instruction.length > MAX_CONTENT_INSTRUCTION_LENGTH || !selected || selectedChannels.length === 0) return;
     setSavingDraft(true);
     setMagicError('');
     try {
       const payload = {
         agent_id: selected,
         instruction: instruction.trim(),
+        reference_asset_id: referenceAssetId || null,
         image_style: imageStyle,
         is_carousel: isCarouselDisabled ? false : isCarousel,
         cta: cta.trim(),
@@ -189,13 +285,14 @@ export function ContentFormModal({
 
   async function handleGenerateSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (submission.current.busy || action.busy || savingDraft || !selected || selectedChannels.length === 0) return;
+    if (submission.current.busy || action.busy || savingDraft || referenceBusy || referenceDescriptionUnsaved || instructionError || instruction.length > MAX_CONTENT_INSTRUCTION_LENGTH || !selected || selectedChannels.length === 0) return;
     setMagicError('');
     submission.current.busy = true;
     void action.act(async () => {
       const payload: Record<string, unknown> = {
         agent_id: selected,
         instruction: instruction.trim(),
+        ...(referenceAssetId ? { reference_asset_id: referenceAssetId } : {}),
         image_style: imageStyle,
         is_carousel: isCarouselDisabled ? false : isCarousel,
         cta: cta.trim(),
@@ -239,6 +336,8 @@ export function ContentFormModal({
               required
               onChange={(e) => {
                 setSelected(e.target.value);
+                setReferenceAssetId('');
+                setReferenceSummary('');
                 const agent = agents.find((a) => a.id === e.target.value);
                 if (agent?.channels?.length) setChannels(agent.channels);
               }}
@@ -301,12 +400,52 @@ export function ContentFormModal({
             <textarea
               name="instruction"
               value={instruction}
-              onChange={(e) => setInstruction(e.target.value)}
+              onChange={(e) => updateInstruction(e.target.value)}
               placeholder="Descreva a ideia, tema ou instruções para as imagens..."
-              maxLength={10000}
+              aria-describedby="content-instruction-counter"
               rows={3}
             />
           </div>
+          <div id="content-instruction-counter" className="new-content-character-count">{instruction.length} / {MAX_CONTENT_INSTRUCTION_LENGTH}</div>
+          {instructionError && <Notice message={instructionError} error />}
+        </div>
+
+        <div className="new-content-field">
+          <label className="new-content-label" htmlFor="content-reference">Imagem de referência</label>
+          <p className="new-content-sublabel">A pauta define a cena; a referência orienta a aparência. Uma referência selecionada dobra a cota desta geração.</p>
+          <select id="content-reference" value={referenceAssetId} disabled={referenceBusy}
+            onChange={(e) => {
+              const id = e.target.value;
+              setReferenceAssetId(id);
+              setReferenceSummary(references.find(item => item.id === id)?.summary_text || '');
+            }}>
+            <option value="">Sem referência</option>
+            {references.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+          <label className="new-content-reference-upload">
+            Enviar nova imagem para o DNA Visual Geral
+            <input type="file" accept="image/png,image/jpeg,image/webp" disabled={referenceBusy}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = '';
+                if (file) void uploadReference(file);
+              }} />
+          </label>
+          {referenceBusy && <p className="new-content-sublabel">Preparando referência...</p>}
+          {referenceAssetId && !selectedReference && !referenceBusy && <Notice message="A referência deste rascunho não está disponível para este agente. Remova-a ou selecione outra." error />}
+          {selectedReference && <div className="new-content-reference-preview">
+            {selectedReference.url && <img src={selectedReference.url} alt={selectedReference.name} />}
+            <label className="new-content-label" htmlFor="content-reference-summary">Descrição visual editável</label>
+            <textarea id="content-reference-summary" value={referenceSummary} maxLength={6000} disabled={referenceBusy}
+              onChange={(e) => setReferenceSummary(e.target.value)} rows={4} />
+            <div className="new-content-reference-actions">
+              <Button secondary type="button" disabled={referenceBusy || !referenceSummary.trim() || referenceSummary === selectedReference.summary_text}
+                onClick={() => void saveReferenceSummary()}>Salvar descrição</Button>
+              <Button secondary type="button" disabled={referenceBusy} onClick={() => { setReferenceAssetId(''); setReferenceSummary(''); }}>Remover referência</Button>
+            </div>
+          </div>}
+          {referenceDescriptionUnsaved && <p className="new-content-sublabel">Salve a descrição antes de gerar ou salvar o rascunho.</p>}
+          {referenceError && <Notice message={referenceError} error />}
         </div>
 
         <div className="new-content-field">
@@ -422,7 +561,8 @@ export function ContentFormModal({
                 <strong>
                   {imageCount *
                     selectedChannels.length *
-                    (QUALITY_MULTIPLIERS[imageQuality] ?? 1)}
+                    (QUALITY_MULTIPLIERS[imageQuality] ?? 1) *
+                    (referenceAssetId ? 2 : 1)}
                 </strong>
               </span>
             </div>
@@ -498,7 +638,7 @@ export function ContentFormModal({
           <button
             type="button"
             className="btn-save-draft"
-            disabled={action.busy || savingDraft || !selected || selectedChannels.length === 0}
+            disabled={action.busy || savingDraft || referenceBusy || referenceDescriptionUnsaved || Boolean(instructionError) || !selected || selectedChannels.length === 0}
             onClick={handleSaveDraft}
           >
             <FileText size={16} />
@@ -510,7 +650,7 @@ export function ContentFormModal({
             </Button>
             <Button
               className="btn-generate-gradient"
-              disabled={!selected || selectedChannels.length === 0 || savingDraft}
+              disabled={!selected || selectedChannels.length === 0 || savingDraft || referenceBusy || referenceDescriptionUnsaved || Boolean(instructionError) || Boolean(referenceAssetId && !selectedReference)}
               busy={action.busy}
               type="submit"
             >

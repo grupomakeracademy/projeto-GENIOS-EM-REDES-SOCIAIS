@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import { guard, checked, fail, AppError } from '@/lib/security/context';
 import { adminClient } from '@/lib/supabase/server';
-import { channelSchema, destinationSchema } from '@/lib/domain';
+import { channelSchema, destinationSchema, MAX_CONTENT_INSTRUCTION_LENGTH, contentGenerationQuota } from '@/lib/domain';
 import { executionResponsibles } from '@/features/content/responsibles';
 import { requireAgent } from '@/lib/security/agent';
 import { dispatchRequestedJob } from '@/lib/jobs/lifecycle';
+import { requireSelectedReference } from '@/lib/ai/selected-reference';
 export const maxDuration = 300;
 export async function GET(request: Request) {
   try {
@@ -70,21 +71,25 @@ export async function PATCH(request: Request) {
 export async function POST(request: Request) {
   try {
     const ctx = await guard(request, 'write');
+    const raw = await request.json();
+    if (typeof raw?.instruction === 'string' && raw.instruction.length > MAX_CONTENT_INSTRUCTION_LENGTH)
+      throw new AppError('A pauta deve ter no máximo 2.000 caracteres.', 400);
     const input = z
       .object({
         destination: destinationSchema.optional(),
         content_id: z.uuid().optional(),
         agent_id: z.uuid(),
-        instruction: z.string().max(10000).default(''),
+        instruction: z.string().max(MAX_CONTENT_INSTRUCTION_LENGTH, 'A pauta deve ter no máximo 2.000 caracteres.').default(''),
         channels: z.array(channelSchema).min(1),
         image_count: z.number().int().min(0).max(20),
         image_style: z.string().max(120).optional(),
         image_quality: z.enum(['low', 'medium', 'high']).optional(),
         is_carousel: z.boolean().optional(),
         cta: z.string().max(500).optional(),
+        reference_asset_id: z.uuid().optional(),
         idempotency_key: z.uuid(),
       })
-      .parse(await request.json());
+      .parse(raw);
 
     if (input.image_count <= 1) {
       input.is_carousel = false;
@@ -112,11 +117,10 @@ export async function POST(request: Request) {
         .maybeSingle(),
     );
     if (!agent) throw new AppError('forbidden', 403);
+    const selectedReference = await requireSelectedReference(ctx.workspaceId, input.agent_id, input.reference_asset_id, true);
 
-    const qualityMultiplier =
-      input.image_quality === 'medium' || input.image_quality === 'high' ? 3 : 1;
     const count = typeof input.image_count === 'number' && input.image_count > 0 ? input.image_count : 1;
-    const requiredQuota = count * input.channels.length * qualityMultiplier;
+    const requiredQuota = contentGenerationQuota(count, input.channels.length, input.image_quality || 'low', Boolean(input.reference_asset_id));
 
     const { data: userProfile } = await ctx.db
       .from('profiles')
@@ -136,7 +140,7 @@ export async function POST(request: Request) {
     const db = adminClient();
     const queued = await db.rpc('enqueue_manual_generation', {
       w: ctx.workspaceId, a: input.agent_id, actor_id: ctx.user.id,
-      p: { ...input, title_language: userProfile?.locale || 'pt-BR' }, k: `${ctx.workspaceId}:manual:${input.idempotency_key}`, c: input.content_id || null,
+      p: { ...input, reference_summary: selectedReference?.summary_text || null, title_language: userProfile?.locale || 'pt-BR' }, k: `${ctx.workspaceId}:manual:${input.idempotency_key}`, c: input.content_id || null,
     });
     if (queued.error || !queued.data) throw new AppError('conflict', 409);
     const job = checked(await db.from('background_jobs').select('id,status').eq('id', queued.data).single());

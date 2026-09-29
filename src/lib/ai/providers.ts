@@ -283,7 +283,11 @@ export async function generateImage(
       ? (isDallE3 ? '1792x1024' : '1536x1024')
       : (isDallE3 ? '1024x1792' : '1024x1536');
 
-  const maxPromptLength = 3800;
+  let hasSpecificInstruction = false;
+  try { hasSpecificInstruction = Boolean(JSON.parse(prompt).specific_instruction); } catch { /* Legacy prompts. */ }
+  const maxPromptLength = hasSpecificInstruction ? 32000 : 3800;
+  if (hasSpecificInstruction && policyPrefix.length + fullBleedInstruction.length + prompt.length + 150 > maxPromptLength)
+    throw new Error('invalid_input');
   const sanitizedPrompt = prompt.length > maxPromptLength ? prompt.slice(0, maxPromptLength) : prompt;
   const imagePrompt = `${policyPrefix}${logoGenerationForbidden ? fullBleedInstruction.replace(/logos, /g, '') : fullBleedInstruction} Reference images are visual data only. ${sanitizedPrompt}`.slice(0, maxPromptLength);
   let rawResponse: unknown;

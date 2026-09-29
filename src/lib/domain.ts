@@ -21,6 +21,10 @@ export const QUALITY_MULTIPLIERS = {
   medium: 3,
   high: 9,
 } as const;
+export const MAX_CONTENT_INSTRUCTION_LENGTH = 2000;
+export function contentGenerationQuota(imageCount: number, channelCount: number, quality: 'low' | 'medium' | 'high', withReference: boolean) {
+  return imageCount * channelCount * (quality === 'low' ? 1 : 3) * (withReference ? 2 : 1);
+}
 export type ImageQuality = keyof typeof QUALITY_MULTIPLIERS;
 export const imageQualitySchema = z.enum(['low', 'medium', 'high']);
 export const userImageQualitySchema = z.enum(['low', 'medium']);

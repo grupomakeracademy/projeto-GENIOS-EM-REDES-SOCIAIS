@@ -5,10 +5,31 @@ import { adminClient } from '@/lib/supabase/server';
 import { validateFile } from '@/lib/security/uploads';
 import { computeContentHash, processAssetKnowledge } from '@/lib/ai/asset-knowledge';
 import { assetProcessingMessage } from '@/lib/ai/asset-processing-errors';
+import { requireAgent } from '@/lib/security/agent';
+export const maxDuration = 300;
 export async function GET(request: Request) {
   try {
     const ctx = await guard(request),
       page = Math.max(1, Number(new URL(request.url).searchParams.get('page')) || 1);
+    const agentId = new URL(request.url).searchParams.get('agent_id');
+    if (agentId) {
+      await requireAgent(ctx, agentId);
+      const agent = checked(await ctx.db.from('agents').select('visual_settings')
+        .eq('id', agentId).eq('workspace_id', ctx.workspaceId).single());
+      if (!agent) throw new AppError('forbidden', 403);
+      const ids = Array.isArray(agent.visual_settings?.reference_ids)
+        ? (agent.visual_settings.reference_ids as string[]).filter(id => z.uuid().safeParse(id).success)
+        : [];
+      if (!ids.length) return Response.json({ items: [], total: 0 });
+      const assets = checked(await ctx.db.from('assets').select('id,name,mime_type,summary_text,storage_path,processing_status,category')
+        .eq('workspace_id', ctx.workspaceId).eq('category', 'reference')
+        .eq('processing_status', 'processed').like('mime_type', 'image/%').in('id', ids));
+      const items = await Promise.all((assets || []).filter(a => a.summary_text).map(async asset => {
+        const signed = await ctx.db.storage.from('brand-assets').createSignedUrl(asset.storage_path, 900);
+        return { ...asset, url: signed.data?.signedUrl || '' };
+      }));
+      return Response.json({ items, total: items.length });
+    }
     const result = await ctx.db
       .from('assets')
       .select('*', { count: 'exact' })
@@ -36,6 +57,9 @@ export async function POST(request: Request) {
     const rawFiles = form.getAll('files').concat(form.getAll('file'));
     const files = rawFiles.filter((f): f is File => f instanceof File && f.size > 0);
     if (!files.length) throw new AppError('invalid_input');
+    const fromContentReference = form.get('source') === 'content_reference';
+    if (fromContentReference && (files.length !== 1 || form.get('category') !== 'reference'))
+      throw new AppError('Envie apenas uma imagem de referência por vez.', 400);
 
     // Limit 50 MB per batch upload
     const batchSize = files.reduce((acc, f) => acc + f.size, 0);
@@ -49,6 +73,13 @@ export async function POST(request: Request) {
     for (const file of files) {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const ext = validateFile(bytes, file.type);
+      if (fromContentReference) {
+        const suffix = file.name.toLowerCase().split('.').pop();
+        if (!['png', 'jpg', 'jpeg', 'webp'].includes(suffix || '') ||
+            !file.type.startsWith('image/') ||
+            (ext === 'jpg' ? suffix !== 'jpg' && suffix !== 'jpeg' : suffix !== ext))
+          throw new AppError('A extensão, o formato e o conteúdo da imagem devem corresponder.', 400);
+      }
       const id = crypto.randomUUID();
       const path = `workspace/${ctx.workspaceId}/library/${id}.${ext}`;
       const hash = computeContentHash(bytes);
@@ -106,6 +137,7 @@ export async function POST(request: Request) {
         .from('assets')
         .select('textual_interpretation, summary_text, processor_model, processing_version')
         .eq('content_hash', hash)
+        .eq('workspace_id', ctx.workspaceId)
         .eq('processing_status', 'processed')
         .not('summary_text', 'is', null)
         .limit(1)
@@ -139,7 +171,7 @@ export async function PATCH(request: Request) {
   try {
     const ctx = await guard(request, 'write');
     const raw = await request.json();
-    if (raw.action === 'reprocess') {
+    if (raw.action === 'reprocess' || raw.action === 'process') {
       const input = z.object({ id: z.uuid() }).parse(raw);
       const db = adminClient();
       const { data: assetItem } = await db
@@ -156,7 +188,7 @@ export async function PATCH(request: Request) {
         return Response.json({ ok: true, skipped: true, reason: 'unsupported_category', visionCallsMade: 0 });
       }
 
-      const result = await processAssetKnowledge(input.id, { force: true });
+      const result = await processAssetKnowledge(input.id, { force: raw.action === 'reprocess' });
       if (result.status === 'failed') {
         return Response.json({ ok: false, status: result.status, error: assetProcessingMessage(result.error) }, { status: 502 });
       }
@@ -181,6 +213,22 @@ export async function PATCH(request: Request) {
         }),
       );
       return Response.json({ ok: true });
+    }
+    if (raw.action === 'update_summary') {
+      const input = z.object({ id: z.uuid(), agent_id: z.uuid(), summary_text: z.string().trim().min(1).max(6000) }).parse(raw);
+      await requireAgent(ctx, input.agent_id);
+      const db = adminClient();
+      const agent = checked(await db.from('agents').select('visual_settings')
+        .eq('id', input.agent_id).eq('workspace_id', ctx.workspaceId).maybeSingle());
+      if (!Array.isArray(agent?.visual_settings?.reference_ids) ||
+          !agent.visual_settings.reference_ids.includes(input.id)) throw new AppError('forbidden', 403);
+      const asset = checked(await db.from('assets').select('id')
+        .eq('id', input.id).eq('workspace_id', ctx.workspaceId)
+        .eq('category', 'reference').eq('processing_status', 'processed').like('mime_type', 'image/%').maybeSingle());
+      if (!asset) throw new AppError('forbidden', 403);
+      checked(await db.from('assets').update({ summary_text: input.summary_text })
+        .eq('id', input.id).eq('workspace_id', ctx.workspaceId));
+      return Response.json({ ok: true, summary_text: input.summary_text });
     }
     if (raw.action === 'set_master') {
       const input = z.object({ id: z.uuid(), identity_name: z.string().min(1).max(120).optional() }).parse(raw);

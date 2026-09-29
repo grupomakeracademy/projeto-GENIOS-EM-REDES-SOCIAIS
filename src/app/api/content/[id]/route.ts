@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import { guard, checked, fail, AppError } from '@/lib/security/context';
 import { adminClient } from '@/lib/supabase/server';
-import { channels, channelSchema, type Channel, destinationSchema } from '@/lib/domain';
+import { channels, channelSchema, type Channel, destinationSchema, MAX_CONTENT_INSTRUCTION_LENGTH } from '@/lib/domain';
 import { requireAgent } from '@/lib/security/agent';
+import { requireSelectedReference } from '@/lib/ai/selected-reference';
 import { publishVariantContent } from '@/lib/social/publisher';
 import { dispatchRequestedJob } from '@/lib/jobs/lifecycle';
 export const maxDuration = 300;
@@ -224,26 +225,31 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       { id } = await params;
     z.uuid().parse(id);
 
+    const raw = await request.json();
+    if (typeof raw?.instruction === 'string' && raw.instruction.length > MAX_CONTENT_INSTRUCTION_LENGTH)
+      throw new AppError('A pauta deve ter no máximo 2.000 caracteres.', 400);
     const body = z
       .object({
         agent_id: z.string().uuid(),
-        instruction: z.string().max(10000).default(''),
+        instruction: z.string().max(MAX_CONTENT_INSTRUCTION_LENGTH, 'A pauta deve ter no máximo 2.000 caracteres.').default(''),
         image_style: z.string().max(120).optional(),
         image_quality: z.enum(['low', 'medium', 'high']).optional(),
         is_carousel: z.boolean().optional(),
         cta: z.string().max(500).optional(),
+        reference_asset_id: z.uuid().nullable().optional(),
         channels: z.array(channelSchema).min(1),
         image_count: z.number().int().min(1).max(6).default(2),
         destination: destinationSchema.optional(),
         status: z.enum(['DRAFT']).default('DRAFT'),
       })
-      .parse(await request.json());
+      .parse(raw);
 
     if (body.image_count <= 1) {
       body.is_carousel = false;
     }
 
     await requireAgent(ctx, body.agent_id);
+    await requireSelectedReference(ctx.workspaceId, body.agent_id, body.reference_asset_id || undefined);
 
     const db = adminClient();
     const existing = checked(
@@ -269,6 +275,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       channels: body.channels,
       image_count: body.image_count,
       instruction: body.instruction.trim(),
+      reference_asset_id: body.reference_asset_id || null,
       destination: body.destination || existingStrat.destination || 'feed',
     };
 
