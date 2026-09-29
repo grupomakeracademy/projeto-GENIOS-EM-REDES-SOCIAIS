@@ -181,8 +181,9 @@ test('Feed e Stories usam a mesma regra no conteúdo e na rotina', async ({ page
       const variants = await db.from('content_variants').select('id').eq('workspace_id', workspaceId);
       const ids = (variants.data || []).map(variant => variant.id);
       if (ids.length) {
-        const media = await db.from('content_media').select('storage_path').in('variant_id', ids);
-        const paths = (media.data || []).map(item => item.storage_path);
+        const media = await db.from('content_media').select('variant_id,position,storage_path').in('variant_id', ids);
+        const paths = [...new Set((media.data || []).flatMap(item => [item.storage_path,
+          item.storage_path.replace(/\/[^/]+$/, `/${item.variant_id}-${item.position}-original.png`)]))];
         if (paths.length) await db.storage.from('brand-assets').remove(paths);
       }
       await db.from('workspaces').delete().eq('id', workspaceId);
