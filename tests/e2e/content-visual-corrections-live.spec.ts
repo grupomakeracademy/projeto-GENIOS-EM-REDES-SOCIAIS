@@ -4,11 +4,14 @@ import { createClient } from '@supabase/supabase-js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import sharp from 'sharp';
+import { preserveLiveImagesForReview } from './helpers/review-test-images';
 
 loadEnvConfig(process.cwd());
 
 test('texto editorial de marca e recomposição real entre proporções', async ({ page }) => {
   test.skip(process.env.LIVE_VISUAL_CORRECTIONS_TEST !== '1', 'Geração real exige execução explícita.');
+  test.skip(!process.env.LIVE_TEST_REVIEW_WORKSPACE_ID || !process.env.LIVE_TEST_REVIEW_AGENT_ID ||
+    !process.env.LIVE_TEST_REVIEW_USER_ID, 'Configure o destino de Revisão antes de gerar imagens reais.');
   test.setTimeout(600_000);
   const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { persistSession: false } });
@@ -166,6 +169,7 @@ test('texto editorial de marca e recomposição real entre proporções', async 
     }
   } finally {
     if (workspaceId) {
+      await preserveLiveImagesForReview(db, workspaceId);
       const assets = await db.from('assets').select('storage_path').eq('workspace_id', workspaceId);
       const media = await db.from('content_media').select('storage_path').eq('workspace_id', workspaceId);
       const paths = [...(assets.data || []), ...(media.data || [])].map(row => row.storage_path).filter(Boolean);

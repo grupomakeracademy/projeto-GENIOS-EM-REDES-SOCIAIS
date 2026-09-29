@@ -12,6 +12,7 @@ export async function GET(request: Request) {
     const ctx = await guard(request),
       page = Math.max(1, Number(new URL(request.url).searchParams.get('page')) || 1);
     const agentId = new URL(request.url).searchParams.get('agent_id');
+    const draftReferenceId = new URL(request.url).searchParams.get('draft_reference_id');
     if (agentId) {
       await requireAgent(ctx, agentId);
       const agent = checked(await ctx.db.from('agents').select('visual_settings')
@@ -21,10 +22,13 @@ export async function GET(request: Request) {
         ? (agent.visual_settings.reference_ids as string[]).filter(id => z.uuid().safeParse(id).success)
         : [];
       if (!ids.length) return Response.json({ items: [], total: 0 });
-      const assets = checked(await ctx.db.from('assets').select('id,name,mime_type,summary_text,storage_path,processing_status,category')
+      const assets = checked(await ctx.db.from('assets').select('id,name,mime_type,summary_text,storage_path,processing_status,category,asset_subtype')
         .eq('workspace_id', ctx.workspaceId).eq('category', 'reference')
-        .eq('processing_status', 'processed').like('mime_type', 'image/%').in('id', ids));
-      const items = await Promise.all((assets || []).filter(a => a.summary_text).map(async asset => {
+        .like('mime_type', 'image/%').in('id', ids));
+      const items = await Promise.all((assets || []).filter(a =>
+        (a.processing_status === 'processed' && Boolean(a.summary_text) && a.asset_subtype !== 'content_reference_staged') ||
+        (a.id === draftReferenceId && a.asset_subtype === 'content_reference_staged')
+      ).map(async asset => {
         const signed = await ctx.db.storage.from('brand-assets').createSignedUrl(asset.storage_path, 900);
         return { ...asset, url: signed.data?.signedUrl || '' };
       }));
@@ -34,6 +38,7 @@ export async function GET(request: Request) {
       .from('assets')
       .select('*', { count: 'exact' })
       .eq('workspace_id', ctx.workspaceId)
+      .or('asset_subtype.is.null,asset_subtype.neq.content_reference_staged')
       .order('created_at', { ascending: false })
       .range((page - 1) * 24, page * 24 - 1);
     const items = checked(result);
@@ -93,7 +98,8 @@ export async function POST(request: Request) {
         form.get('is_master') === 'true' ||
         form.get('is_master') === '1' ||
         form.get('is_master') === 'on';
-      const assetSubtype = form.get('asset_subtype') ? String(form.get('asset_subtype')).trim().slice(0, 50) : null;
+      const assetSubtype = fromContentReference ? 'content_reference_staged' :
+        (form.get('asset_subtype') ? String(form.get('asset_subtype')).trim().slice(0, 50) : null);
       const placement = form.get('placement') ? String(form.get('placement')).trim().slice(0, 50) : 'top_left';
       const scalePercent = form.get('scale_percent')
         ? Math.min(100, Math.max(5, parseInt(String(form.get('scale_percent')), 10) || 22))
@@ -143,7 +149,7 @@ export async function POST(request: Request) {
         .limit(1)
         .maybeSingle();
 
-      if (existingProcessed?.summary_text) {
+      if (existingProcessed?.summary_text && !fromContentReference) {
         await db
           .from('assets')
           .update({
@@ -176,7 +182,7 @@ export async function PATCH(request: Request) {
       const db = adminClient();
       const { data: assetItem } = await db
         .from('assets')
-        .select('category')
+        .select('category,asset_subtype')
         .eq('id', input.id)
         .eq('workspace_id', ctx.workspaceId)
         .maybeSingle();
@@ -191,6 +197,11 @@ export async function PATCH(request: Request) {
       const result = await processAssetKnowledge(input.id, { force: raw.action === 'reprocess' });
       if (result.status === 'failed') {
         return Response.json({ ok: false, status: result.status, error: assetProcessingMessage(result.error) }, { status: 502 });
+      }
+      if (assetItem.asset_subtype === 'content_reference_staged') {
+        checked(await db.from('assets').update({ asset_subtype: null })
+          .eq('id', input.id).eq('workspace_id', ctx.workspaceId)
+          .eq('asset_subtype', 'content_reference_staged'));
       }
       return Response.json({ ok: true, ...result });
     }

@@ -4,11 +4,14 @@ import { createClient } from '@supabase/supabase-js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import sharp from 'sharp';
+import { preserveLiveImagesForReview } from './helpers/review-test-images';
 
 loadEnvConfig(process.cwd());
 
 test('pauta e imagem de referência: análise única, geração real e cota dobrada', async ({ page }) => {
   test.skip(process.env.LIVE_CONTENT_REFERENCE_TEST !== '1', 'Execute explicitamente com LIVE_CONTENT_REFERENCE_TEST=1.');
+  test.skip(!process.env.LIVE_TEST_REVIEW_WORKSPACE_ID || !process.env.LIVE_TEST_REVIEW_AGENT_ID ||
+    !process.env.LIVE_TEST_REVIEW_USER_ID, 'Configure o destino de Revisão antes de gerar imagens reais.');
   test.setTimeout(600_000);
   page.setDefaultTimeout(30_000);
   const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -53,39 +56,13 @@ test('pauta e imagem de referência: análise única, geração real e cota dobr
     await page.locator('.new-content-reference-upload input[type="file"]').setInputFiles({
       name: 'qa-reference.png', mimeType: 'image/png', buffer: png,
     });
-    await expect(page.locator('#content-reference .new-content-reference-name', { hasText: 'qa-reference.png' })).toHaveCount(1, { timeout: 180_000 });
+    await expect(page.locator('#content-reference summary')).toContainText('qa-reference.png');
     await expect(page.locator('.new-content-reference-preview img')).toBeVisible();
-    const assetId = (await page.locator('#content-reference').getAttribute('data-reference-id'))!;
-    const assetBefore = await db.from('assets').select('id,processing_status,summary_text,processed_at,storage_path')
-      .eq('id', assetId).single();
-    expect(assetBefore.error).toBeNull();
-    expect(assetBefore.data!.processing_status).toBe('processed');
-    expect(assetBefore.data!.summary_text).toBeTruthy();
-    const agent = await db.from('agents').select('visual_settings').eq('id', agentId).single();
-    expect(agent.data!.visual_settings.reference_ids).toContain(assetId);
-    const editedSummary = `${assetBefore.data!.summary_text}\nDireção revisada: tons azuis e composição editorial limpa.`;
-    await page.locator('#content-reference-summary').fill(editedSummary);
-    await page.getByRole('button', { name: 'Salvar descrição' }).click();
-    await expect(page.locator('#content-reference-summary')).toHaveValue(editedSummary);
-
-    await page.getByRole('button', { name: 'Remover referência' }).click();
     await expect(page.locator('#content-reference')).toHaveAttribute('data-reference-id', '');
-    await expect(page.locator('.total-consumption-badge strong')).toHaveText('1');
-    await page.locator('#content-reference summary').click();
-    await page.getByRole('option', { name: 'qa-reference.png' }).click();
-    await expect(page.locator('#content-reference-summary')).toHaveValue(editedSummary);
+    const beforeGenerate = await db.from('assets').select('id').eq('workspace_id', workspaceId).eq('category', 'reference');
+    expect(beforeGenerate.error).toBeNull();
+    expect(beforeGenerate.data).toHaveLength(0);
     await expect(page.locator('.total-consumption-badge strong')).toHaveText('2');
-
-    const draft = await page.evaluate(async ({ agentId, assetId, instruction }) => {
-      const response = await fetch('/api/content', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent_id: agentId, reference_asset_id: assetId, instruction,
-          channels: ['instagram'], image_count: 1, image_quality: 'low' }) });
-      return { status: response.status, data: await response.json() };
-    }, { agentId, assetId, instruction });
-    expect(draft.status).toBe(200);
-    const savedDraft = await db.from('content_items').select('strategy').eq('id', draft.data.id).single();
-    expect(savedDraft.data!.strategy.reference_asset_id).toBe(assetId);
-    expect(savedDraft.data!.strategy.instruction).toBe(instruction);
 
     const overLimit = await page.evaluate(async ({ agentId }) => {
       const response = await fetch('/api/runs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -108,8 +85,16 @@ test('pauta e imagem de referência: análise única, geração real e cota dobr
 
     const job = await db.from('background_jobs').select('payload').eq('id', jobId).single();
     expect(job.error).toBeNull();
+    const assetId = job.data!.payload.reference_asset_id as string;
+    const assetBefore = await db.from('assets').select('id,processing_status,summary_text,processed_at,storage_path')
+      .eq('id', assetId).single();
+    expect(assetBefore.error).toBeNull();
+    expect(assetBefore.data!.processing_status).toBe('processed');
+    expect(assetBefore.data!.summary_text).toBeTruthy();
+    const agent = await db.from('agents').select('visual_settings').eq('id', agentId).single();
+    expect(agent.data!.visual_settings.reference_ids).toContain(assetId);
     expect(job.data!.payload.reference_asset_id).toBe(assetId);
-    expect(job.data!.payload.reference_summary).toBe(editedSummary);
+    expect(job.data!.payload.reference_summary).toBe(assetBefore.data!.summary_text);
     const run = await db.from('agent_runs').select('content_id').eq('job_id', jobId).single();
     expect(run.error).toBeNull();
     const variant = await db.from('content_variants').select('id,channel').eq('content_id', run.data!.content_id).single();
@@ -118,14 +103,50 @@ test('pauta e imagem de referência: análise única, geração real e cota dobr
     const media = await db.from('content_media').select('storage_path,generation_prompt').eq('variant_id', variant.data!.id).single();
     expect(media.error).toBeNull();
     expect(media.data!.generation_prompt).toContain(instruction);
-    expect(media.data!.generation_prompt).toContain('Direção revisada: tons azuis');
+    expect(media.data!.generation_prompt).toContain(assetBefore.data!.summary_text);
     const image = await db.storage.from('brand-assets').download(media.data!.storage_path);
     expect(image.error).toBeNull();
     await mkdir('test-results/content-reference', { recursive: true });
     await writeFile('test-results/content-reference/generated.png', Buffer.from(await image.data!.arrayBuffer()));
+    await page.goto('/contents');
+    await page.getByRole('button', { name: /Novo conteúdo/ }).first().click();
+    await page.getByRole('button', { name: 'Diminuir imagens' }).click();
+    await page.locator('#content-reference summary').click();
+    await page.getByRole('option', { name: 'qa-reference.png' }).click();
+    const editedSummary = `${assetBefore.data!.summary_text}\nDireção revisada: tons azuis e composição editorial limpa.`;
+    await page.locator('#content-reference-summary').fill(editedSummary);
+    await page.getByRole('button', { name: 'Salvar descrição' }).click();
+    await expect(page.locator('#content-reference-summary')).toHaveValue(editedSummary);
+    await page.getByRole('button', { name: 'Remover referência' }).click();
+    await expect(page.locator('.total-consumption-badge strong')).toHaveText('1');
+    await page.locator('#content-reference summary').click();
+    await page.getByRole('option', { name: 'qa-reference.png' }).click();
+    const draft = await page.evaluate(async ({ agentId, assetId, instruction }) => {
+      const response = await fetch('/api/content', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_id: agentId, reference_asset_id: assetId, instruction,
+          channels: ['instagram'], image_count: 1, image_quality: 'low' }) });
+      return { status: response.status, data: await response.json() };
+    }, { agentId, assetId, instruction });
+    expect(draft.status).toBe(200);
+    const savedDraft = await db.from('content_items').select('strategy').eq('id', draft.data.id).single();
+    expect(savedDraft.data!.strategy.reference_asset_id).toBe(assetId);
     const assetAfter = await db.from('assets').select('processed_at,summary_text').eq('id', assetId).single();
     expect(assetAfter.data!.processed_at).toBe(assetBefore.data!.processed_at);
     expect(assetAfter.data!.summary_text).toBe(editedSummary);
+    await page.locator('.new-content-reference-upload input[type="file"]').setInputFiles({
+      name: 'draft-only-reference.png', mimeType: 'image/png', buffer: png,
+    });
+    await expect(page.locator('#content-reference summary')).toContainText('draft-only-reference.png');
+    await page.getByRole('button', { name: 'Salvar como rascunho' }).click();
+    await expect(page.locator('.modal-new-content')).toHaveCount(0);
+    const staged = await db.from('assets').select('id,processing_status,summary_text,asset_subtype')
+      .eq('workspace_id', workspaceId).eq('name', 'draft-only-reference.png').single();
+    expect(staged.error).toBeNull();
+    expect(staged.data!.processing_status).toBe('pending');
+    expect(staged.data!.summary_text).toBeNull();
+    expect(staged.data!.asset_subtype).toBe('content_reference_staged');
+    const listed = await page.evaluate(async () => (await fetch('/api/assets')).json());
+    expect(listed.items.some((item: { id: string }) => item.id === staged.data!.id)).toBe(false);
     const finalBalance = await db.from('profiles').select('content_quota_balance').eq('id', userId).single();
     expect(initialBalance.data!.content_quota_balance - finalBalance.data!.content_quota_balance).toBe(2);
 
@@ -170,6 +191,7 @@ test('pauta e imagem de referência: análise única, geração real e cota dobr
     expect(initialBalance.data!.content_quota_balance - balanceAfterAll.data!.content_quota_balance).toBe(5);
   } finally {
     if (workspaceId) {
+      await preserveLiveImagesForReview(db, workspaceId);
       const assets = await db.from('assets').select('storage_path').eq('workspace_id', workspaceId);
       const media = await db.from('content_media').select('storage_path').eq('workspace_id', workspaceId);
       const paths = [...(assets.data || []), ...(media.data || [])].map(row => row.storage_path).filter(Boolean);

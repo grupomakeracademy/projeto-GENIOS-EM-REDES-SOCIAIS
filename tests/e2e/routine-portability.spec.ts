@@ -2,8 +2,12 @@ import { test, expect } from '@playwright/test';
 import { loadEnvConfig } from '@next/env';
 import { createClient } from '@supabase/supabase-js';
 import { randomUUID, randomBytes } from 'node:crypto';
+import { preserveLiveImagesForReview } from './helpers/review-test-images';
 loadEnvConfig(process.cwd());
 test('routine persistence, channel selection, carousel and scheduled execution', async ({ page }) => {
+  const liveImages = ['1', 'schedule'].includes(process.env.RUN_LIVE_ROUTINE_TEST || '');
+  test.skip(liveImages && (!process.env.LIVE_TEST_REVIEW_WORKSPACE_ID || !process.env.LIVE_TEST_REVIEW_AGENT_ID ||
+    !process.env.LIVE_TEST_REVIEW_USER_ID), 'Configure o destino de Revisão antes de gerar imagens reais.');
   test.setTimeout(['1','schedule'].includes(process.env.RUN_LIVE_ROUTINE_TEST || '') ? 1500000 : 120000);
   page.setDefaultTimeout(20000);
   const db = createClient(
@@ -134,7 +138,11 @@ test('routine persistence, channel selection, carousel and scheduled execution',
     await page.getByRole('button',{name:'Slide 2',exact:true}).click();
     await expect(page.locator('pre')).toHaveText(prompts[1]);
   } finally {
-    if(wid) { await db.from('agent_schedules').update({enabled:false}).eq('workspace_id',wid); await db.from('workspaces').delete().eq('id',wid); }
+    if(wid) {
+      await db.from('agent_schedules').update({enabled:false}).eq('workspace_id',wid);
+      if (liveImages) await preserveLiveImagesForReview(db, wid);
+      await db.from('workspaces').delete().eq('id',wid);
+    }
     if(uid) await db.auth.admin.deleteUser(uid);
   }
 });

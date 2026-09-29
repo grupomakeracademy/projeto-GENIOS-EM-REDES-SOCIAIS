@@ -3,10 +3,14 @@ import { loadEnvConfig } from '@next/env';
 import { createClient } from '@supabase/supabase-js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import sharp from 'sharp';
+import { preserveLiveImagesForReview } from './helpers/review-test-images';
 
 loadEnvConfig(process.cwd());
 
 test('Feed e Stories usam a mesma regra no conteúdo e na rotina', async ({ page }) => {
+  const liveImages = ['1', 'feed', 'schedule'].includes(process.env.LIVE_STORIES_TEST || '');
+  test.skip(liveImages && (!process.env.LIVE_TEST_REVIEW_WORKSPACE_ID || !process.env.LIVE_TEST_REVIEW_AGENT_ID ||
+    !process.env.LIVE_TEST_REVIEW_USER_ID), 'Configure o destino de Revisão antes de gerar imagens reais.');
   test.setTimeout(['1', 'feed', 'schedule'].includes(process.env.LIVE_STORIES_TEST || '') ? 1_200_000 : 180_000);
   const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { persistSession: false } });
@@ -178,6 +182,7 @@ test('Feed e Stories usam a mesma regra no conteúdo e na rotina', async ({ page
   } finally {
     if (workspaceId) {
       await db.from('agent_schedules').update({ enabled: false }).eq('workspace_id', workspaceId);
+      if (liveImages) await preserveLiveImagesForReview(db, workspaceId);
       const variants = await db.from('content_variants').select('id').eq('workspace_id', workspaceId);
       const ids = (variants.data || []).map(variant => variant.id);
       if (ids.length) {

@@ -254,7 +254,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
 
     await requireAgent(ctx, body.agent_id);
-    await requireSelectedReference(ctx.workspaceId, body.agent_id, body.reference_asset_id || undefined);
+    await requireSelectedReference(ctx.workspaceId, body.agent_id, body.reference_asset_id || undefined, false, true);
 
     const db = adminClient();
     const existing = checked(

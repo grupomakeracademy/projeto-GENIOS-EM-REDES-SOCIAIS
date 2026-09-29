@@ -31,7 +31,7 @@ import {
 } from '@/lib/domain';
 
 const ALL_CHANNELS = publicationChannels.feed;
-type VisualReference = { id: string; name: string; url?: string; summary_text: string };
+type VisualReference = { id: string; name: string; url?: string; summary_text: string; processing_status: string; asset_subtype?: string | null };
 const instructionLimitMessage = 'A pauta deve ter no máximo 2.000 caracteres.';
 
 export function ContentFormModal({
@@ -55,6 +55,7 @@ export function ContentFormModal({
   const submission = useRef({ busy: false, key: '' });
   const referenceMenu = useRef<HTMLDetailsElement>(null);
   const referenceFileInput = useRef<HTMLInputElement>(null);
+  const stagedReferenceId = useRef('');
   const isEditing = Boolean(draftItem);
 
   const [selected, setSelected] = useState('');
@@ -67,6 +68,8 @@ export function ContentFormModal({
   const [references, setReferences] = useState<VisualReference[]>([]);
   const [referenceAssetId, setReferenceAssetId] = useState('');
   const [referenceSummary, setReferenceSummary] = useState('');
+  const [pendingReferenceFile, setPendingReferenceFile] = useState<File | null>(null);
+  const [pendingReferenceUrl, setPendingReferenceUrl] = useState('');
   const [referenceBusy, setReferenceBusy] = useState(false);
   const [referenceError, setReferenceError] = useState('');
   const [imageCount, setImageCount] = useState(2);
@@ -82,6 +85,8 @@ export function ContentFormModal({
   useEffect(() => {
     if (!open) return;
     submission.current = { busy: false, key: crypto.randomUUID() };
+    stagedReferenceId.current = '';
+    setPendingReferenceFile(null);
     if (draftItem) {
       const strategy = (draftItem.strategy as Record<string, unknown>) || {};
       const type: PublicationType = strategy.publication_type === 'stories' ? 'stories' : 'feed';
@@ -131,11 +136,12 @@ export function ContentFormModal({
   useEffect(() => {
     if (!open || !selected) return;
     let active = true;
-    void api(`assets?agent_id=${encodeURIComponent(selected)}`).then((res) => {
+    const draftReferenceId = String(((draftItem?.strategy as Record<string, unknown>) || {}).reference_asset_id || '');
+    const query = `assets?agent_id=${encodeURIComponent(selected)}${draftReferenceId ? `&draft_reference_id=${encodeURIComponent(draftReferenceId)}` : ''}`;
+    void api(query).then((res) => {
       if (active) {
         const items = (res.items || []) as VisualReference[];
         setReferences(items);
-        const draftReferenceId = String(((draftItem?.strategy as Record<string, unknown>) || {}).reference_asset_id || '');
         if (draftReferenceId) setReferenceSummary(items.find(item => item.id === draftReferenceId)?.summary_text || '');
       }
     }).catch((e) => {
@@ -143,6 +149,16 @@ export function ContentFormModal({
     });
     return () => { active = false; };
   }, [open, selected, draftItem]);
+
+  useEffect(() => {
+    if (!pendingReferenceFile) {
+      setPendingReferenceUrl('');
+      return;
+    }
+    const url = URL.createObjectURL(pendingReferenceFile);
+    setPendingReferenceUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [pendingReferenceFile]);
 
   useEffect(() => {
     const input = referenceFileInput.current;
@@ -155,7 +171,8 @@ export function ContentFormModal({
   }, [open]);
 
   const selectedReference = references.find((item) => item.id === referenceAssetId);
-  const referenceDescriptionUnsaved = Boolean(selectedReference && referenceSummary.trim() !== selectedReference.summary_text);
+  const referenceDescriptionUnsaved = Boolean(selectedReference && selectedReference.processing_status === 'processed' &&
+    referenceSummary.trim() !== selectedReference.summary_text);
 
   function updateInstruction(value: string) {
     if (value.length > MAX_CONTENT_INSTRUCTION_LENGTH) {
@@ -166,35 +183,49 @@ export function ContentFormModal({
     setInstructionError('');
   }
 
-  async function uploadReference(file: File) {
-    if (referenceBusy) return;
+  function selectReferenceFile(file: File) {
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) ||
         !/\.(png|jpe?g|webp)$/i.test(file.name) || file.size === 0 || file.size > 10 * 1024 * 1024) {
       setReferenceError('Envie uma imagem PNG, JPG ou WebP válida de até 10 MB.');
       return;
     }
-    setReferenceBusy(true);
     setReferenceError('');
-    try {
+    stagedReferenceId.current = '';
+    setPendingReferenceFile(file);
+    setReferenceAssetId('');
+    setReferenceSummary('');
+  }
+
+  async function stageReference(file: File): Promise<string> {
+    let id = stagedReferenceId.current;
+    if (!id) {
       const data = new FormData();
       data.set('file', file);
       data.set('category', 'reference');
       data.set('source', 'content_reference');
       const uploaded = await api('assets', 'POST', data);
-      await api('assets', 'PATCH', { action: 'process', id: uploaded.id });
-      await api('assets', 'PATCH', { action: 'associate', id: uploaded.id, agent_ids: [selected] });
+      id = uploaded.id;
+      stagedReferenceId.current = id;
+    }
+    await api('assets', 'PATCH', { action: 'associate', id, agent_ids: [selected] });
+    return id;
+  }
+
+  async function referenceForGeneration(): Promise<string> {
+    const id = pendingReferenceFile ? await stageReference(pendingReferenceFile) : referenceAssetId;
+    if (!id) return '';
+    if (pendingReferenceFile || selectedReference?.asset_subtype === 'content_reference_staged') {
+      await api('assets', 'PATCH', { action: 'process', id });
       const result = await api(`assets?agent_id=${encodeURIComponent(selected)}`);
       const items = (result.items || []) as VisualReference[];
-      const added = items.find(item => item.id === uploaded.id);
-      if (!added) throw new Error('A referência foi salva, mas não pôde ser carregada. Reabra o formulário.');
+      const ready = items.find(item => item.id === id);
+      if (!ready) throw new Error('A referência foi processada, mas não pôde ser carregada. Tente novamente.');
       setReferences(items);
-      setReferenceAssetId(added.id);
-      setReferenceSummary(added.summary_text);
-    } catch (e) {
-      setReferenceError(e instanceof Error ? e.message : 'Não foi possível preparar a referência.');
-    } finally {
-      setReferenceBusy(false);
+      setReferenceAssetId(id);
+      setReferenceSummary(ready.summary_text);
+      setPendingReferenceFile(null);
     }
+    return id;
   }
 
   async function saveReferenceSummary() {
@@ -277,7 +308,7 @@ export function ContentFormModal({
       const payload = {
         agent_id: selected,
         instruction: instruction.trim(),
-        reference_asset_id: referenceAssetId || null,
+        reference_asset_id: pendingReferenceFile ? await stageReference(pendingReferenceFile) : (referenceAssetId || null),
         image_style: imageStyle,
         is_carousel: isCarouselDisabled ? false : isCarousel,
         cta: cta.trim(),
@@ -310,10 +341,11 @@ export function ContentFormModal({
     setMagicError('');
     submission.current.busy = true;
     void action.act(async () => {
+      const activeReferenceId = await referenceForGeneration();
       const payload: Record<string, unknown> = {
         agent_id: selected,
         instruction: instruction.trim(),
-        ...(referenceAssetId ? { reference_asset_id: referenceAssetId } : {}),
+        ...(activeReferenceId ? { reference_asset_id: activeReferenceId } : {}),
         image_style: imageStyle,
         is_carousel: isCarouselDisabled ? false : isCarousel,
         cta: cta.trim(),
@@ -436,15 +468,15 @@ export function ContentFormModal({
           <span className="new-content-label">Imagem de referência</span>
           <p className="new-content-sublabel">A pauta define a cena; a referência orienta a aparência. Uma referência selecionada dobra a cota desta geração.</p>
           <details ref={referenceMenu} className="new-content-reference-picker" id="content-reference" data-reference-id={referenceAssetId}>
-            <summary aria-label="Selecionar imagem de referência">{selectedReference?.name || 'Sem referência'}</summary>
+            <summary aria-label="Selecionar imagem de referência">{pendingReferenceFile?.name || selectedReference?.name || 'Sem referência'}</summary>
             <div className="new-content-reference-list" role="listbox" aria-label="Biblioteca de referências">
-              <button type="button" role="option" aria-selected={!referenceAssetId}
-                onClick={() => { setReferenceAssetId(''); setReferenceSummary(''); if (referenceMenu.current) referenceMenu.current.open = false; }}>
+              <button type="button" role="option" aria-selected={!referenceAssetId && !pendingReferenceFile}
+                onClick={() => { setPendingReferenceFile(null); stagedReferenceId.current = ''; setReferenceAssetId(''); setReferenceSummary(''); if (referenceMenu.current) referenceMenu.current.open = false; }}>
                 <span className="new-content-reference-thumb"><FileText size={22} aria-hidden="true" /></span>
                 <span>Sem referência</span>
               </button>
-              {references.map(item => <button key={item.id} type="button" role="option" aria-selected={referenceAssetId === item.id}
-                onClick={() => { setReferenceAssetId(item.id); setReferenceSummary(item.summary_text); if (referenceMenu.current) referenceMenu.current.open = false; }}>
+              {references.filter(item => item.asset_subtype !== 'content_reference_staged').map(item => <button key={item.id} type="button" role="option" aria-selected={referenceAssetId === item.id}
+                onClick={() => { setPendingReferenceFile(null); stagedReferenceId.current = ''; setReferenceAssetId(item.id); setReferenceSummary(item.summary_text); if (referenceMenu.current) referenceMenu.current.open = false; }}>
                 <span className="new-content-reference-thumb">
                   <FileText size={22} aria-hidden="true" />
                   {item.url && <img src={item.url} alt="" width={64} height={56} loading="lazy"
@@ -459,19 +491,27 @@ export function ContentFormModal({
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 e.target.value = '';
-                if (file) void uploadReference(file);
+                if (file) selectReferenceFile(file);
               }} />
           </label>
           {referenceBusy && <p className="new-content-sublabel">Preparando referência...</p>}
           {referenceAssetId && !selectedReference && !referenceBusy && <Notice message="A referência deste rascunho não está disponível para este agente. Remova-a ou selecione outra." error />}
+          {pendingReferenceFile && pendingReferenceUrl && <div className="new-content-reference-preview">
+            <img src={pendingReferenceUrl} alt={pendingReferenceFile.name} />
+            <p className="new-content-sublabel">A descrição visual será criada ao clicar em Gerar agora.</p>
+            <Button secondary type="button" onClick={() => { setPendingReferenceFile(null); stagedReferenceId.current = ''; }}>Remover referência</Button>
+          </div>}
           {selectedReference && <div className="new-content-reference-preview">
             {selectedReference.url && <img src={selectedReference.url} alt={selectedReference.name} />}
-            <label className="new-content-label" htmlFor="content-reference-summary">Descrição visual editável</label>
-            <textarea id="content-reference-summary" value={referenceSummary} maxLength={6000} disabled={referenceBusy}
-              onChange={(e) => setReferenceSummary(e.target.value)} rows={4} />
+            {selectedReference.asset_subtype === 'content_reference_staged' ?
+              <p className="new-content-sublabel">A descrição visual será criada ao clicar em Gerar agora.</p> : <>
+                <label className="new-content-label" htmlFor="content-reference-summary">Descrição visual editável</label>
+                <textarea id="content-reference-summary" value={referenceSummary} maxLength={6000} disabled={referenceBusy}
+                  onChange={(e) => setReferenceSummary(e.target.value)} rows={4} />
+              </>}
             <div className="new-content-reference-actions">
-              <Button secondary type="button" disabled={referenceBusy || !referenceSummary.trim() || referenceSummary === selectedReference.summary_text}
-                onClick={() => void saveReferenceSummary()}>Salvar descrição</Button>
+              {selectedReference.asset_subtype !== 'content_reference_staged' && <Button secondary type="button" disabled={referenceBusy || !referenceSummary.trim() || referenceSummary === selectedReference.summary_text}
+                onClick={() => void saveReferenceSummary()}>Salvar descrição</Button>}
               <Button secondary type="button" disabled={referenceBusy} onClick={() => { setReferenceAssetId(''); setReferenceSummary(''); }}>Remover referência</Button>
             </div>
           </div>}
@@ -604,7 +644,7 @@ export function ContentFormModal({
                   {imageCount *
                     selectedChannels.length *
                     (QUALITY_MULTIPLIERS[imageQuality] ?? 1) *
-                    (referenceAssetId ? 2 : 1)}
+                    (referenceAssetId || pendingReferenceFile ? 2 : 1)}
                 </strong>
               </span>
             </div>

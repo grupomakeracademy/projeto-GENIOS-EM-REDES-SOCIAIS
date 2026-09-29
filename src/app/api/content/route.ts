@@ -39,7 +39,7 @@ export async function POST(request: Request) {
       throw new AppError('Canal incompatível com o tipo de publicação.', 400);
 
     await requireAgent(ctx, body.agent_id);
-    await requireSelectedReference(ctx.workspaceId, body.agent_id, body.reference_asset_id || undefined);
+    await requireSelectedReference(ctx.workspaceId, body.agent_id, body.reference_asset_id || undefined, false, true);
 
     if (body.image_count <= 1) {
       body.is_carousel = false;
