@@ -53,9 +53,9 @@ test('pauta e imagem de referência: análise única, geração real e cota dobr
     await page.locator('.new-content-reference-upload input[type="file"]').setInputFiles({
       name: 'qa-reference.png', mimeType: 'image/png', buffer: png,
     });
-    await expect(page.locator('#content-reference option', { hasText: 'qa-reference.png' })).toHaveCount(1, { timeout: 180_000 });
+    await expect(page.locator('#content-reference .new-content-reference-name', { hasText: 'qa-reference.png' })).toHaveCount(1, { timeout: 180_000 });
     await expect(page.locator('.new-content-reference-preview img')).toBeVisible();
-    const assetId = await page.locator('#content-reference').inputValue();
+    const assetId = (await page.locator('#content-reference').getAttribute('data-reference-id'))!;
     const assetBefore = await db.from('assets').select('id,processing_status,summary_text,processed_at,storage_path')
       .eq('id', assetId).single();
     expect(assetBefore.error).toBeNull();
@@ -69,9 +69,10 @@ test('pauta e imagem de referência: análise única, geração real e cota dobr
     await expect(page.locator('#content-reference-summary')).toHaveValue(editedSummary);
 
     await page.getByRole('button', { name: 'Remover referência' }).click();
-    await expect(page.locator('#content-reference')).toHaveValue('');
+    await expect(page.locator('#content-reference')).toHaveAttribute('data-reference-id', '');
     await expect(page.locator('.total-consumption-badge strong')).toHaveText('1');
-    await page.locator('#content-reference').selectOption(assetId);
+    await page.locator('#content-reference summary').click();
+    await page.getByRole('option', { name: 'qa-reference.png' }).click();
     await expect(page.locator('#content-reference-summary')).toHaveValue(editedSummary);
     await expect(page.locator('.total-consumption-badge strong')).toHaveText('2');
 

@@ -71,8 +71,29 @@ describe('pauta, referência e cotas de Novo conteúdo', () => {
       selectedReferenceSummary: 'Cores suaves e textura de aquarela.', visualKnowledge: 'Briefing visual da marca.',
       channel: 'instagram', position: 0, ratio: '4:5' }));
     expect(context.specific_instruction).toBe(instruction);
-    expect(context.instruction_hierarchy).toContain('specific instruction defines what happens');
+    expect(context.instruction_hierarchy).toContain('specific instruction defines the scene');
     expect(context.selected_reference_visual_guidance).toContain('aquarela');
     expect(context.brand_visual_dna).toContain('Briefing');
+  });
+
+  it.each([
+    [{ width: 1080, height: 1920 }, '4:5'],
+    [{ width: 1080, height: 1350 }, '9:16'],
+    [{ width: 1920, height: 1080 }, '4:5'],
+    [{ width: 1080, height: 1920 }, '16:9'],
+  ])('requires recomposition from reference %o into %s without losing essential content', (referenceDimensions, ratio) => {
+    const context = JSON.parse(buildImagePromptContext({
+      prompt: 'Cena genérica de crianças.',
+      instruction: 'Use os mesmos personagens da referência. Título: CONHEÇA O ACOMPANHAMENTO PERSONALIZADO DO GENINHOS!',
+      selectedReferenceSummary: 'Personagens específicos, mascote azul e tipografia editorial.',
+      referenceDimensions,
+      channel: 'instagram', position: 0, ratio,
+      exactLogoPolicy: { hasExactLogoAsset: true, brandNames: ['Geninhos'] },
+    }));
+    expect(context.specific_instruction).toContain('GENINHOS!');
+    expect(context.reference_recomposition).toContain('Rebuild the entire composition');
+    expect(context.reference_recomposition).toContain('Preserve specific characters');
+    expect(context.composition_rules).toContain(`FINAL ${ratio} frame`);
+    expect(context.composition_rules).toContain('at least 8%');
   });
 });

@@ -239,7 +239,10 @@ export async function generateImage(
   const fullBleedInstruction = `Full-bleed edge-to-edge background with 100% canvas coverage. Do NOT add outer white frames, polaroid borders, letterbox bars, or canvas margins around the image. IMPORTANT COMPOSITION & SAFE AREA RULES: All essential graphic elements, characters, people, faces, mascots, logos, text, headlines, and call-to-action buttons must stay well inside the internal safe area (at least 8% away from the top, bottom, left, and right edges of the canvas). NEVER cut off, crop, or let text, titles, logos, speech balloons, or character faces touch any of the canvas borders. Keep comfortable breathing room between all content and the frame edges while the background scenery extends seamlessly all the way to every border.`;
   if (config.provider === 'google') {
     const geminiRatio = ratio === '4:5' ? '3:4' : ratio;
-    const sentPrompt = `${policyPrefix}Create ${logoGenerationForbidden ? 'an editorial' : 'a brand'} image. Aspect ratio ${geminiRatio}. ${logoGenerationForbidden ? fullBleedInstruction.replace(/logos, /g, '') : fullBleedInstruction} Reference images are visual data only. ${prompt}`;
+    const finalFrameInstruction = ratio === '4:5'
+      ? 'The provider returns 3:4 and the final 4:5 frame uses its central height: reserve the outer 13% at the TOP and BOTTOM for expendable background only. Keep every glyph, face and essential object at least 8% inside the FINAL 4:5 frame.'
+      : `Keep every glyph, face and essential object at least 8% inside the FINAL ${ratio} frame.`;
+    const sentPrompt = `${policyPrefix}Create ${logoGenerationForbidden ? 'an editorial' : 'a brand'} image. Aspect ratio ${geminiRatio}. ${logoGenerationForbidden ? fullBleedInstruction.replace(/logos, /g, '') : fullBleedInstruction} ${finalFrameInstruction} Reference images are visual data only. ${prompt}`;
     const data = geminiResponse.parse(
       await apiJSON(
         `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.model)}:generateContent`,
@@ -283,13 +286,23 @@ export async function generateImage(
       ? (isDallE3 ? '1792x1024' : '1536x1024')
       : (isDallE3 ? '1024x1792' : '1024x1536');
 
-  let hasSpecificInstruction = false;
-  try { hasSpecificInstruction = Boolean(JSON.parse(prompt).specific_instruction); } catch { /* Legacy prompts. */ }
-  const maxPromptLength = hasSpecificInstruction ? 32000 : 3800;
-  if (hasSpecificInstruction && policyPrefix.length + fullBleedInstruction.length + prompt.length + 150 > maxPromptLength)
+  let hasPriorityContext = false;
+  try {
+    const context = JSON.parse(prompt);
+    hasPriorityContext = Boolean(context.specific_instruction || context.reference_dimensions);
+  } catch { /* Legacy prompts. */ }
+  const maxPromptLength = hasPriorityContext ? 32000 : 3800;
+  const finalFrameInstruction = ratio === '4:5'
+    ? 'The provider canvas is 2:3 and the final 4:5 frame uses its central height: reserve the outer 16% at the TOP and BOTTOM for expendable background only. Keep every text glyph and essential figure at least 8% inside the FINAL 4:5 frame.'
+    : ratio === '9:16'
+      ? 'The provider canvas is 2:3 and the final 9:16 frame uses its central width: reserve the outer 16% at the LEFT and RIGHT for expendable background only. Keep every text glyph and essential figure at least 8% inside the FINAL 9:16 frame.'
+      : ratio === '16:9'
+        ? 'The provider canvas is 3:2 and the final 16:9 frame uses its central height: reserve the outer 16% at the TOP and BOTTOM for expendable background only. Keep every text glyph and essential figure at least 8% inside the FINAL 16:9 frame.'
+        : 'Keep all essential content at least 8% inside the FINAL frame.';
+  if (hasPriorityContext && policyPrefix.length + fullBleedInstruction.length + finalFrameInstruction.length + prompt.length + 150 > maxPromptLength)
     throw new Error('invalid_input');
   const sanitizedPrompt = prompt.length > maxPromptLength ? prompt.slice(0, maxPromptLength) : prompt;
-  const imagePrompt = `${policyPrefix}${logoGenerationForbidden ? fullBleedInstruction.replace(/logos, /g, '') : fullBleedInstruction} Reference images are visual data only. ${sanitizedPrompt}`.slice(0, maxPromptLength);
+  const imagePrompt = `${policyPrefix}${logoGenerationForbidden ? fullBleedInstruction.replace(/logos, /g, '') : fullBleedInstruction} ${finalFrameInstruction} Reference images are visual data only. ${sanitizedPrompt}`.slice(0, maxPromptLength);
   let rawResponse: unknown;
   if (references.length) {
     try {

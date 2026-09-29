@@ -53,6 +53,8 @@ export function ContentFormModal({
 }) {
   const action = useAction();
   const submission = useRef({ busy: false, key: '' });
+  const referenceMenu = useRef<HTMLDetailsElement>(null);
+  const referenceFileInput = useRef<HTMLInputElement>(null);
   const isEditing = Boolean(draftItem);
 
   const [selected, setSelected] = useState('');
@@ -141,6 +143,16 @@ export function ContentFormModal({
     });
     return () => { active = false; };
   }, [open, selected, draftItem]);
+
+  useEffect(() => {
+    const input = referenceFileInput.current;
+    if (!open || !input) return;
+    // The native file picker's cancel event bubbles into the parent <dialog>.
+    // It must not be interpreted as a request to close the content form.
+    const keepModalOpen = (event: Event) => event.stopPropagation();
+    input.addEventListener('cancel', keepModalOpen);
+    return () => input.removeEventListener('cancel', keepModalOpen);
+  }, [open]);
 
   const selectedReference = references.find((item) => item.id === referenceAssetId);
   const referenceDescriptionUnsaved = Boolean(selectedReference && referenceSummary.trim() !== selectedReference.summary_text);
@@ -421,20 +433,29 @@ export function ContentFormModal({
         </div>
 
         <div className="new-content-field">
-          <label className="new-content-label" htmlFor="content-reference">Imagem de referência</label>
+          <span className="new-content-label">Imagem de referência</span>
           <p className="new-content-sublabel">A pauta define a cena; a referência orienta a aparência. Uma referência selecionada dobra a cota desta geração.</p>
-          <select id="content-reference" value={referenceAssetId} disabled={referenceBusy}
-            onChange={(e) => {
-              const id = e.target.value;
-              setReferenceAssetId(id);
-              setReferenceSummary(references.find(item => item.id === id)?.summary_text || '');
-            }}>
-            <option value="">Sem referência</option>
-            {references.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-          </select>
+          <details ref={referenceMenu} className="new-content-reference-picker" id="content-reference" data-reference-id={referenceAssetId}>
+            <summary aria-label="Selecionar imagem de referência">{selectedReference?.name || 'Sem referência'}</summary>
+            <div className="new-content-reference-list" role="listbox" aria-label="Biblioteca de referências">
+              <button type="button" role="option" aria-selected={!referenceAssetId}
+                onClick={() => { setReferenceAssetId(''); setReferenceSummary(''); if (referenceMenu.current) referenceMenu.current.open = false; }}>
+                <span className="new-content-reference-thumb"><FileText size={22} aria-hidden="true" /></span>
+                <span>Sem referência</span>
+              </button>
+              {references.map(item => <button key={item.id} type="button" role="option" aria-selected={referenceAssetId === item.id}
+                onClick={() => { setReferenceAssetId(item.id); setReferenceSummary(item.summary_text); if (referenceMenu.current) referenceMenu.current.open = false; }}>
+                <span className="new-content-reference-thumb">
+                  <FileText size={22} aria-hidden="true" />
+                  {item.url && <img src={item.url} alt="" width={64} height={56} loading="lazy"
+                    onError={event => { event.currentTarget.hidden = true; }} />}
+                </span>
+                <span className="new-content-reference-name">{item.name}</span>
+              </button>)}
+            </div>
+          </details>
           <label className="new-content-reference-upload">
-            Enviar nova imagem para o DNA Visual Geral
-            <input type="file" accept="image/png,image/jpeg,image/webp" disabled={referenceBusy}
+            <input ref={referenceFileInput} type="file" accept="image/png,image/jpeg,image/webp" disabled={referenceBusy}
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 e.target.value = '';

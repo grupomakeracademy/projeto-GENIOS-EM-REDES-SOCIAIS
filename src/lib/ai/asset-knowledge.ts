@@ -460,7 +460,7 @@ export async function getAgentVisualKnowledge(agent: Agent, selectedReference?: 
 
   if (hasExact) {
     lines.push(
-      'REGRA MANDATÓRIA DE ASSET EXATO (LOGOTIPO): Jamais gere logotipo, texto de marca ou selos na cena. O logotipo original exato é sobreposto em pós-produção.',
+      'REGRA MANDATÓRIA DE ASSET EXATO (LOGOTIPO): Jamais gere logotipo, wordmark ou selo na cena. Preserve literalmente nomes de marca pedidos pelo usuário como texto editorial comum. O logotipo original exato é sobreposto em pós-produção.',
     );
   }
 
@@ -680,17 +680,23 @@ export async function getExactAssetPolicy(agent: Agent): Promise<ExactLogoPolicy
   const placementText = placements.length ? placements.join(', ') : 'canto reservado';
 
   if (hasLogo) {
+    const logo = exactAssets.find(a => !a.asset_subtype || a.asset_subtype === 'logo')!;
+    const horizontal = logo.placement?.includes('right') ? 'right' : 'left';
+    const vertical = logo.placement?.includes('bottom') ? 'bottom' : 'top';
+    const widthPercent = Math.min(65, Math.max(30, (logo.scale_percent || 22) + 10));
+    const overlayExclusion = `OFFICIAL LOGO OVERLAY EXCLUSION: reserve the ${horizontal}most ${widthPercent}% of the canvas width and the ${vertical}most 28% of its height as background ONLY. No headline, letter, CTA, face or other essential element may overlap this corner rectangle. Move the entire headline below this zone or start every line beyond it. The original logo will be overlaid there after image generation.`;
     return { hasExactLogoAsset: true, brandNames, guidance: [
       'REGRA MANDATÓRIA DE MARCA — PROIBIDO GERAR LOGOTIPO:',
-      '• Não desenhe, não gere, não recrie, não invente, não estilize e não alucine nenhum logotipo, nome de marca, wordmark, selo de marca, assinatura visual ou texto de marca na imagem.',
+      '• Não desenhe, não gere, não recrie, não invente, não estilize e não alucine nenhum logotipo, wordmark, selo de marca ou assinatura visual na imagem.',
       '• Não escreva o nome da marca como elemento gráfico decorativo.',
       '• Não crie variações tipográficas da marca.',
       '• Não adicione logotipo em cantos, rodapés, embalagens, telas, objetos, cadernos, uniformes, canecas ou qualquer outro elemento da cena.',
       `• Quando a composição normalmente pedir marca visual, mantenha a área (${placementText}) completamente limpa e neutra.`,
       '• O logotipo oficial será aplicado posteriormente em pós-produção a partir do arquivo original cadastrado.',
-      '• Diferenciação obrigatória: texto editorial da peça = permitido; marca / logotipo / selo / assinatura visual = terminantemente proibido para a IA.',
-      '• Portanto, a imagem gerada pela IA deve sair sem nenhum logotipo ou marca embutida.',
-    ].join('\n') };
+      '• Diferenciação obrigatória: nome da marca solicitado explicitamente em título, subtítulo, CTA ou frase editorial = permitido e deve ser preservado literalmente; logotipo / selo / assinatura visual = terminantemente proibido para a IA.',
+      '• Portanto, a imagem gerada pela IA deve sair sem nenhum logotipo ou símbolo de marca embutido.',
+      `• ${overlayExclusion}`,
+    ].join('\n'), overlayExclusion };
   }
 
   return { hasExactLogoAsset: false, brandNames, guidance: [

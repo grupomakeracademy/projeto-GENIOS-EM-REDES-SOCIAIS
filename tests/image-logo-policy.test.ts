@@ -32,6 +32,8 @@ describe('Image logo protection (network always mocked)', () => {
     const parsed = JSON.parse(await payload());
     expect(parsed.brand).toBeUndefined();
     expect(parsed.image_generation_policy.instruction).toBe(NO_LOGO_INSTRUCTION);
+    expect(parsed.overlay_exclusion_zone).toContain('leftmost 30%');
+    expect(parsed.overlay_exclusion_zone).toContain('topmost 28%');
     for (const field of ['scene', 'style', 'brand_visual_dna']) {
       expect(parsed[field]).not.toMatch(/g[eê]nios|educa|logo|wordmark/iu);
     }
@@ -59,6 +61,9 @@ describe('Image logo protection (network always mocked)', () => {
     const finalPrompt = provider === 'openai' ? body.prompt : body.contents[0].parts[0].text;
     expect(finalPrompt.startsWith(NO_LOGO_INSTRUCTION)).toBe(true);
     expect(finalPrompt).not.toContain('Create a brand image');
+    expect(finalPrompt).toContain(provider === 'openai'
+      ? 'outer 16% at the TOP and BOTTOM'
+      : 'outer 13% at the TOP and BOTTOM');
     if (provider === 'openai') expect(finalPrompt.length).toBeLessThanOrEqual(3800);
     expect(fetchMock).toHaveBeenCalledTimes(1); // local stub only, never a real request
   });
@@ -104,5 +109,25 @@ describe('Image logo protection (network always mocked)', () => {
     expect(context.scene).toContain('Criança de 12 anos sentada numa mesa moderna de estudos');
     expect(context.scene).toContain('mascote azul feliz próximo');
     expect(context.scene).not.toMatch(/logos|geninhos/i);
+  });
+
+  it('preserves an explicitly requested brand name as editorial text but still forbids a generated logo', async () => {
+    const scene = 'Título editorial: CONHEÇA O ACOMPANHAMENTO PERSONALIZADO DO GENINHOS! Desenhe o logotipo Geninhos. Crianças estudando.';
+    const prompt = buildImagePromptContext({ prompt: scene,
+      instruction: 'CONHEÇA O ACOMPANHAMENTO PERSONALIZADO DO GENINHOS!',
+      channel: 'instagram', position: 0, ratio: '4:5',
+      exactLogoPolicy: { hasExactLogoAsset: true, brandNames: ['Geninhos'] },
+    });
+    const context = JSON.parse(prompt);
+    expect(context.scene).toContain('GENINHOS!');
+    expect(context.scene).not.toContain('Desenhe o logotipo');
+    expect(context.image_generation_policy.instruction).toContain('do not turn it into a logo');
+    const png = await sharp({ create: { width: 8, height: 8, channels: 3, background: 'white' } }).png().toBuffer();
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ data: [{ b64_json: png.toString('base64') }] }), { status: 200 }));
+    await generateImage({ provider: 'openai', model: 'local-test' } as AIConfig, 'mock-key', prompt, '4:5');
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body).prompt as string;
+    expect(sent).toContain('GENINHOS!');
+    expect(sent).toContain('NO GRAPHIC BRANDING');
+    expect(sent).toContain('outer 16% at the TOP and BOTTOM');
   });
 });

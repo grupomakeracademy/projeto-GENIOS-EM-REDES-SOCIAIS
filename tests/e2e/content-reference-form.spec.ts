@@ -35,7 +35,7 @@ test('formulário limita pauta, reaproveita referência e preserva rascunho', as
     await page.getByLabel('E-mail', { exact: true }).fill(email);
     await page.getByLabel('Senha', { exact: true }).fill(password);
     await page.getByRole('button', { name: 'Entrar', exact: true }).click();
-    await expect(page).toHaveURL(/dashboard/);
+    await expect(page).toHaveURL(/dashboard/, { timeout: 30_000 });
     const upload = await page.evaluate(async (encoded) => {
       const bytes = Uint8Array.from(atob(encoded), char => char.charCodeAt(0));
       const form = new FormData();
@@ -66,12 +66,24 @@ test('formulário limita pauta, reaproveita referência e preserva rascunho', as
     await field.fill('Cena nova, independente do conteúdo anterior.');
     await expect(page.locator('#content-instruction-counter')).toHaveText('45 / 2000');
 
-    await page.locator('#content-reference').selectOption(assetId);
+    await page.locator('#content-reference summary').click();
+    await page.getByRole('option', { name: 'referencia-existente.png' }).click();
     await expect(page.locator('.new-content-reference-preview img')).toBeVisible();
     await expect(page.locator('.total-consumption-badge strong')).toHaveText('2');
+    await page.locator('#content-reference summary').click();
+    await expect(page.locator('.new-content-reference-list img')).toHaveCount(1);
+    await expect.poll(() => page.locator('.new-content-reference-list img').evaluate(img => (img as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+    await page.locator('#content-reference summary').click();
+    await expect(page.getByText('Enviar nova imagem para o DNA Visual Geral')).toHaveCount(0);
+    await expect(page.locator('.new-content-reference-upload input[type="file"]')).toBeAttached();
+    await page.locator('.new-content-reference-upload input[type="file"]').dispatchEvent('cancel', { bubbles: true });
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(field).toHaveValue('Cena nova, independente do conteúdo anterior.');
+    await expect(page.locator('#content-reference')).toHaveAttribute('data-reference-id', assetId);
     await page.getByRole('button', { name: 'Remover referência' }).click();
     await expect(page.locator('.total-consumption-badge strong')).toHaveText('1');
-    await page.locator('#content-reference').selectOption(assetId);
+    await page.locator('#content-reference summary').click();
+    await page.getByRole('option', { name: 'referencia-existente.png' }).click();
     await expect(page.locator('#content-reference-summary')).toHaveValue('Estilo editorial em azul.');
 
     const overLimit = await page.evaluate(async (agentId) => {

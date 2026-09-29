@@ -30,7 +30,7 @@ import {
 } from '@/lib/ai/asset-knowledge';
 import { saveCompositedImage } from './save-composited-image';
 import { requireSelectedReference } from '@/lib/ai/selected-reference';
-import { NO_LOGO_INSTRUCTION, suppressVisualBranding, type ExactLogoPolicy } from '@/lib/ai/image-logo-policy';
+import { NO_LOGO_INSTRUCTION, suppressVisualBranding, explicitlyRequestedBrandNames, type ExactLogoPolicy } from '@/lib/ai/image-logo-policy';
 export const jobSchema = z.object({
   id: z.uuid(),
   workspace_id: z.uuid(),
@@ -73,20 +73,24 @@ export function buildImagePromptContext(params: {
   exactLogoPolicy?: ExactLogoPolicy;
   instruction?: string;
   selectedReferenceSummary?: string;
+  referenceDimensions?: { width: number; height: number };
 }) {
   const hasExactLogoGuidance = params.exactLogoPolicy?.hasExactLogoAsset === true;
   const names = [...(params.exactLogoPolicy?.brandNames || []), params.companyOrName || ''];
   const clean = (value: string | undefined) => hasExactLogoGuidance ? suppressVisualBranding(value, names) : value;
+  const editorialNames = explicitlyRequestedBrandNames(params.instruction, names);
   // Sanitize before truncation so a cut-off name/directive cannot escape the filter.
-  const scene = clean(params.prompt);
+  const scene = hasExactLogoGuidance
+    ? suppressVisualBranding(params.prompt, names, editorialNames)
+    : params.prompt;
   const cleanedStyle = clean(params.style);
   const styleSummary = cleanedStyle?.slice(0, 300);
   if (!scene?.trim()) throw new Error('invalid_output');
   console.log('[Image Logo Policy]', {
     hasExactLogoAsset: hasExactLogoGuidance,
     antiLogoShieldActivated: hasExactLogoGuidance,
-    brandSuppressedFromImagePrompt: hasExactLogoGuidance,
-    brandNameSuppressionApplied: hasExactLogoGuidance,
+    brandSuppressedFromImagePrompt: hasExactLogoGuidance && !editorialNames.length,
+    brandNameSuppressionApplied: hasExactLogoGuidance && names.some(name => name && !editorialNames.includes(name)),
     visualContextSanitized: hasExactLogoGuidance && (scene !== params.prompt || cleanedStyle !== params.style || clean(params.visualKnowledge) !== params.visualKnowledge),
     logoGenerationForbidden: hasExactLogoGuidance,
     mandatoryAntiLogoInstructionInjected: hasExactLogoGuidance,
@@ -94,12 +98,20 @@ export function buildImagePromptContext(params: {
 
   return JSON.stringify({
     image_generation_policy: hasExactLogoGuidance ? { logoGenerationForbidden: true, instruction: NO_LOGO_INSTRUCTION } : undefined,
+    overlay_exclusion_zone: params.exactLogoPolicy?.overlayExclusion || undefined,
     instruction_hierarchy: params.instruction?.trim()
-      ? 'Technical and safety rules first. The specific instruction defines what happens in this image. The selected reference and agent DNA guide appearance and brand identity only. Do not replace the requested event with an older or generic scene.'
+      ? 'Technical and safety rules first. The specific instruction defines the scene and exact editorial wording. The destination ratio and preservation of mandatory content come next. The selected reference and agent DNA guide appearance only. The generic scene is subordinate and must never contradict the specific instruction.'
       : undefined,
     specific_instruction: params.instruction?.trim() || undefined,
+    editorial_text_rule: params.instruction?.trim()
+      ? 'Preserve every word and explicitly requested brand name as ordinary editorial text. Reflow lines, reduce type size and move characters before omitting or clipping any requested text. Never interpret an editorial brand name as a request to draw a logo.'
+      : undefined,
     scene,
     selected_reference_visual_guidance: clean(params.selectedReferenceSummary) || undefined,
+    reference_dimensions: params.referenceDimensions || undefined,
+    reference_recomposition: params.referenceDimensions
+      ? `The selected reference is ${params.referenceDimensions.width}x${params.referenceDimensions.height}; the destination is ${params.ratio}. Rebuild the entire composition on the destination canvas instead of cropping, stretching or copying its framing. Reposition and resize text, people, faces, mascots and essential objects. Preserve specific characters when explicitly requested, changing only their placement or pose. The specific instruction overrides outdated reference text, promotions and generic scene details.`
+      : undefined,
     style: styleSummary || undefined,
     aspect_ratio: params.ratio,
     channel: params.channel,
@@ -108,7 +120,7 @@ export function buildImagePromptContext(params: {
     brand: hasExactLogoGuidance ? undefined : (params.companyOrName || undefined),
     brand_visual_dna: clean(params.visualKnowledge) || undefined,
     exact_asset_guidance: params.exactAssetGuidance || undefined,
-    composition_rules: `Full-bleed edge-to-edge background covering 100% canvas with NO white outer borders or letterboxing. All essential elements (text, titles, faces, characters, buttons) MUST stay within the inner safe zone (at least 8% away from all borders) so that nothing is cut off or touching borders.${params.exactAssetGuidance ? ' ' + params.exactAssetGuidance : ''}`,
+    composition_rules: `Full-bleed edge-to-edge background covering 100% canvas with NO white outer borders or letterboxing. Compose for the FINAL ${params.ratio} frame, keeping every word, title, CTA, face, character, mascot and essential object fully inside its inner safe zone (at least 8% away from every FINAL edge). Some providers return an approximate canvas that is normalized to ${params.ratio} afterward: keep all essential content in the central final frame, with expendable background only outside it. Reflow long headlines or reduce type size before clipping; never cut or omit mandatory words. No text or essential object may touch the final borders.${params.exactAssetGuidance ? ' ' + params.exactAssetGuidance : ''}`,
   });
 }
 
@@ -184,6 +196,9 @@ export async function saveImage(
       assetId: selectedReference.id,
     });
   }
+  const referenceDimensions = selectedReference && visualReferences[0]
+    ? await sharp(Buffer.from(visualReferences[0].data, 'base64')).metadata()
+    : undefined;
 
   const imagePromptContext = buildImagePromptContext({
     prompt,
@@ -197,6 +212,9 @@ export async function saveImage(
     exactLogoPolicy,
     instruction: job.payload.origin === 'manual' ? String(job.payload.instruction || '') : undefined,
     selectedReferenceSummary,
+    referenceDimensions: referenceDimensions?.width && referenceDimensions?.height
+      ? { width: referenceDimensions.width, height: referenceDimensions.height }
+      : undefined,
   });
 
   // Automated scene reference: 0 when possible, strictly 1 master when character is in scene, NEVER ALL

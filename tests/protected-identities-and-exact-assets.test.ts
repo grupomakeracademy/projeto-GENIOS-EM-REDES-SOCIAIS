@@ -179,7 +179,8 @@ describe('Protected Identities and Exact Assets System (Generic)', () => {
       expect(guidance).toContain('Não escreva o nome da marca como elemento gráfico decorativo');
       expect(guidance).toContain('Não crie variações tipográficas da marca');
       expect(guidance).toContain('Não adicione logotipo em cantos, rodapés, embalagens');
-      expect(guidance).toContain('texto editorial da peça = permitido; marca / logotipo / selo / assinatura visual = terminantemente proibido');
+      expect(guidance).toContain('nome da marca solicitado explicitamente em título, subtítulo, CTA ou frase editorial = permitido');
+      expect(guidance).toContain('logotipo / selo / assinatura visual = terminantemente proibido');
 
       // Test buildImagePromptContext: suppresses brand property to prevent hallucinations
       const promptContextStr = buildImagePromptContext({

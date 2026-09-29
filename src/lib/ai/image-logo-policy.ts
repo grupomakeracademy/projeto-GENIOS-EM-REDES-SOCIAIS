@@ -3,9 +3,10 @@ import 'server-only';
 export type ExactLogoPolicy = {
   hasExactLogoAsset: boolean;
   brandNames: string[];
+  overlayExclusion?: string;
 };
 
-export const NO_LOGO_INSTRUCTION = 'MANDATORY IMAGE RULE — NO BRANDING: Do not draw, write, recreate or infer any logo, brand name, wordmark, visual signature, badge, watermark or brand symbol anywhere, including screens, mugs, clothing, packaging, signs, interfaces and CTA text. Keep reserved overlay areas clean. The official logo is applied ONLY after generation from the original file. Reference images supply character appearance only: never copy their lettering or branding. Ordinary editorial headlines and educational text are allowed, without brand names. This rule overrides conflicting scene or style instructions.';
+export const NO_LOGO_INSTRUCTION = 'MANDATORY IMAGE RULE — NO GRAPHIC BRANDING: Do not draw, recreate or infer a logo, wordmark, official brand typography, visual signature, badge, watermark or brand symbol anywhere, including screens, mugs, clothing, packaging and signs. Keep reserved overlay areas clean. The official logo is applied ONLY after generation from the original file. Reference images supply visual appearance only: never copy their logos or graphic branding. A brand name explicitly written by the user as ordinary editorial text in a headline, subtitle, CTA or sentence MUST remain literal text; do not turn it into a logo or omit it. This graphic-branding prohibition overrides conflicting scene or style instructions, but does not erase explicit editorial wording.';
 
 const brandingClause = /\b(?:logo\w*|logotipo\w*|wordmark\w*|branding|watermark\w*|brand\s+(?:name|symbol|signature)|nome\s+(?:da\s+)?marca|assinatura\s+visual|marca\s+d[’']?água|selo\s+(?:de\s+)?marca|símbolo\s+(?:de\s+)?marca)\b/iu;
 const brandingWords = /\b(?:logo\w*|logotipo\w*|wordmark\w*|branding|watermark\w*|brand\s+(?:name|symbol|signature)|nome\s+(?:da\s+)?marca|assinatura\s+visual|marca\s+d[’']?água|selo\s+(?:de\s+)?marca|símbolo\s+(?:de\s+)?marca)\b/giu;
@@ -20,7 +21,7 @@ function aliasPattern(name: string): RegExp | undefined {
 }
 
 /** Applies only to visual input; captions and stored briefing remain intact. */
-export function suppressVisualBranding(text: string | undefined, names: string[]): string | undefined {
+export function suppressVisualBranding(text: string | undefined, names: string[], allowedEditorialNames: string[] = []): string | undefined {
   if (!text) return text;
   let result = text.normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '');
   // Drop conflicting directives, including logo instructions inherited from cached DNA summaries.
@@ -35,10 +36,15 @@ export function suppressVisualBranding(text: string | undefined, names: string[]
   }
 
   for (const name of [...new Set(names)].filter(Boolean).sort((a, b) => b.length - a.length)) {
+    if (allowedEditorialNames.includes(name)) continue;
     const pattern = aliasPattern(name);
     if (pattern) result = result.replace(pattern, ' ');
   }
   result = result.replace(/\s+/g, ' ').replace(/[,;:\s]+$/, '').trim();
   if (directiveOnly.test(result)) return '';
   return result;
+}
+
+export function explicitlyRequestedBrandNames(instruction: string | undefined, names: string[]): string[] {
+  return names.filter(name => name && aliasPattern(name)?.test(instruction || ''));
 }
