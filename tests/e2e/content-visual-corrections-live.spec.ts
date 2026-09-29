@@ -102,6 +102,7 @@ test('texto editorial de marca e recomposição real entre proporções', async 
     expect(media.error).toBeNull();
     expect(media.data!.generation_prompt).toContain('CONHEÇA O ACOMPANHAMENTO PERSONALIZADO DO GENINHOS!');
     expect(media.data!.generation_prompt).toContain('NO GRAPHIC BRANDING');
+    expect(media.data!.generation_prompt).toContain('OFFICIAL LOGO OVERLAY EXCLUSION');
     expect(media.data!.generation_prompt).toContain('540x960');
     expect(media.data!.generation_prompt).toContain('outer 16% at the TOP and BOTTOM');
     const image = await db.storage.from('brand-assets').download(media.data!.storage_path);
@@ -153,6 +154,7 @@ test('texto editorial de marca e recomposição real entre proporções', async 
       const scenarioMedia = await db.from('content_media').select('storage_path,generation_prompt')
         .eq('variant_id', scenarioVariant.data!.id).single();
       expect(scenarioMedia.data!.generation_prompt).toContain('GENINHOS!');
+      expect(scenarioMedia.data!.generation_prompt).toContain('OFFICIAL LOGO OVERLAY EXCLUSION');
       expect(scenarioMedia.data!.generation_prompt).toContain(`${scenario.width}x${scenario.height}`);
       const scenarioResult = await db.storage.from('brand-assets').download(scenarioMedia.data!.storage_path);
       expect(scenarioResult.error).toBeNull();
