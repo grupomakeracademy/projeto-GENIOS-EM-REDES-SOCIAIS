@@ -16,7 +16,7 @@ const agent = { id: 'agent', workspace_id: 'workspace', name: 'Assistente', brie
 let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   state.assets = [{ id: 'logo', category: 'exact_asset', asset_subtype: 'logo', placement: 'top_left', scale_percent: 20, storage_path: 'official.png' }];
-  state.error = null; state.downloadError = false;
+  state.error = null; state.downloadError = false; state.overlay = Buffer.alloc(0);
   fetchMock = vi.fn(() => { throw new Error('External networking forbidden in this test'); });
   vi.stubGlobal('fetch', fetchMock);
 });
@@ -32,8 +32,8 @@ describe('Image logo protection (network always mocked)', () => {
     const parsed = JSON.parse(await payload());
     expect(parsed.brand).toBeUndefined();
     expect(parsed.image_generation_policy.instruction).toBe(NO_LOGO_INSTRUCTION);
-    expect(parsed.overlay_exclusion_zone).toContain('leftmost 30%');
-    expect(parsed.overlay_exclusion_zone).toContain('topmost 30%');
+    expect(parsed.overlay_exclusion_zone).toContain('left edge from 5% to 25%');
+    expect(parsed.overlay_exclusion_zone).toContain('top edge from 5% to 30%');
     for (const field of ['scene', 'style', 'brand_visual_dna']) {
       expect(parsed[field]).not.toMatch(/g[eê]nios|educa|logo|wordmark/iu);
     }
@@ -113,6 +113,25 @@ describe('Image logo protection (network always mocked)', () => {
     expect(context.scene).toContain('Criança de 12 anos sentada numa mesa moderna de estudos');
     expect(context.scene).not.toContain('mascote azul feliz próximo');
     expect(context.scene).not.toMatch(/logos|geninhos/i);
+  });
+
+  it('reserves the actual bottom-left overlay footprint and keeps a requested editorial CTA', async () => {
+    state.assets = [{ id: 'logo', category: 'exact_asset', asset_subtype: 'logo', placement: 'bottom_left', scale_percent: 35, storage_path: 'official.png' }];
+    state.overlay = await sharp({ create: { width: 200, height: 100, channels: 4, background: 'blue' } }).png().toBuffer();
+    const policy = await getExactAssetPolicy(agent, '4:5');
+    const parsed = JSON.parse(buildImagePromptContext({
+      prompt: 'Crianças aprendem com cards educativos.', channel: 'instagram', position: 0, ratio: '4:5',
+      cta: 'Conheça o Geninhos', exactAssetGuidance: policy.guidance, exactLogoPolicy: policy,
+    }));
+    expect(parsed.overlay_exclusion_zone).toContain('left edge from 5% to 40%');
+    expect(parsed.overlay_exclusion_zone).toContain('bottom edge from 5% to 19%');
+    expect(parsed.overlay_exclusion_zone).toContain('through 43% from the left and 22% from the bottom');
+    expect(parsed.overlay_exclusion_zone).toContain('footer, it must be on the RIGHT only');
+    expect(parsed.overlay_exclusion_zone).toContain('above the footer it may appear wherever');
+    expect(parsed.requested_cta).toBe('Conheça o Geninhos');
+    expect(parsed.composition_rules).toContain('organized cards, icons, secondary details or interfaces');
+    expect(parsed.composition_rules).toContain('Full-bleed edge-to-edge background');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('preserves an explicitly requested brand name as editorial text but still forbids a generated logo', async () => {

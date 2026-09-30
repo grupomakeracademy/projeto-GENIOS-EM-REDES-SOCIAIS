@@ -73,13 +73,14 @@ export function buildImagePromptContext(params: {
   exactAssetGuidance?: string;
   exactLogoPolicy?: ExactLogoPolicy;
   instruction?: string;
+  cta?: string | null;
   selectedReferenceSummary?: string;
   referenceDimensions?: { width: number; height: number };
 }) {
   const hasExactLogoGuidance = params.exactLogoPolicy?.hasExactLogoAsset === true;
   const names = [...(params.exactLogoPolicy?.brandNames || []), params.companyOrName || ''];
   const clean = (value: string | undefined) => hasExactLogoGuidance ? suppressVisualBranding(value, names) : value;
-  const editorialNames = explicitlyRequestedBrandNames(params.instruction, names);
+  const editorialNames = explicitlyRequestedBrandNames([params.instruction, params.cta].filter(Boolean).join(' '), names);
   const imageInstruction = hasExactLogoGuidance
     ? suppressVisualBranding(params.instruction, names, editorialNames)
     : params.instruction;
@@ -107,6 +108,10 @@ export function buildImagePromptContext(params: {
       ? 'Technical and safety rules first. The specific instruction defines the scene and exact editorial wording. The destination ratio and preservation of mandatory content come next. The selected reference and agent DNA guide appearance only. The generic scene is subordinate and must never contradict the specific instruction.'
       : undefined,
     specific_instruction: imageInstruction?.trim() || undefined,
+    requested_cta: params.cta?.trim()
+      ? (hasExactLogoGuidance ? suppressVisualBranding(params.cta, names, editorialNames) : params.cta)
+      : undefined,
+    cta_layout_rule: 'Keep the CTA when requested. If placed in the footer, put it only on the RIGHT, never at footer center or left. Above the footer it may be placed wherever it best balances the composition. Keep it legible, within the text safe area and outside any exact-asset overlay rectangle. Reorganize surrounding elements instead of dropping the CTA.',
     editorial_text_rule: params.instruction?.trim()
       ? 'Preserve every word and explicitly requested brand name as ordinary editorial text. Reflow lines, reduce type size and move characters before omitting or clipping any requested text. Never interpret an editorial brand name as a request to draw a logo.'
       : undefined,
@@ -124,14 +129,14 @@ export function buildImagePromptContext(params: {
     brand: hasExactLogoGuidance ? undefined : (params.companyOrName || undefined),
     brand_visual_dna: clean(params.visualKnowledge) || undefined,
     exact_asset_guidance: params.exactAssetGuidance || undefined,
-    composition_rules: `Generate directly in the FINAL ${params.ratio} frame. Full-bleed edge-to-edge background must fill 100% of the canvas; no outer border, blurred padding, letterbox or later crop. Keep mandatory words, titles, subtitles and CTAs at least 8% inside the final frame; this safe area does not shrink the background or ordinary scenery. Keep faces and essential objects fully visible; reflow long headlines or reduce type size before clipping or omitting mandatory words.${params.exactAssetGuidance ? ' ' + params.exactAssetGuidance : ''}`,
+    composition_rules: `Generate directly in the FINAL ${params.ratio} frame. Full-bleed edge-to-edge background must fill 100% of the canvas; no outer border, blurred padding, letterbox or later crop. Keep mandatory words, titles, subtitles and CTAs at least 8% inside the final frame; this safe area does not shrink the background or ordinary scenery. Keep faces and essential objects fully visible; reflow long headlines or reduce type size before clipping or omitting mandatory words. Match visual density to the subject: for comparisons, benefits, steps or educational explanations, use organized cards, icons, secondary details or interfaces when useful; preserve hierarchy and legibility without leaving large empty areas.${params.exactAssetGuidance ? ' ' + params.exactAssetGuidance : ''}`,
   });
 }
 
 export async function saveImage(
   job: Job,
   agent: Agent,
-  variant: { id: string; channel: Channel; image_prompts: string[] },
+  variant: { id: string; channel: Channel; image_prompts: string[]; cta?: string | null },
   position: number,
   overwrite = false,
   options?: { style?: string; quality?: 'low' | 'medium' | 'high' },
@@ -182,7 +187,7 @@ export async function saveImage(
     : undefined;
   const visualKnowledge = await getAgentVisualKnowledge(agent, selectedReference
     ? { id: selectedReference.id, summary: selectedReferenceSummary! } : undefined);
-  const exactLogoPolicy = await getExactAssetPolicy(agent);
+  const exactLogoPolicy = await getExactAssetPolicy(agent, ratio);
   const exactAssetGuidance = exactLogoPolicy.guidance;
   // Exact assets can be visibly present inside Library images. Use their
   // persisted DNA text without passing those pixels back to the image model.
@@ -217,6 +222,7 @@ export async function saveImage(
     exactLogoPolicy,
     instruction: job.payload.origin === 'manual' || job.payload.origin === 'routine'
       ? String(job.payload.instruction || '') : undefined,
+    cta: String(job.payload.cta || '') || variant.cta,
     selectedReferenceSummary,
     referenceDimensions: referenceDimensions?.width && referenceDimensions?.height
       ? { width: referenceDimensions.width, height: referenceDimensions.height }
@@ -562,7 +568,7 @@ export async function runPipeline(job: Job) {
   const persisted = checked(
     await db
       .from('content_variants')
-      .select('id,channel,image_prompts')
+      .select('id,channel,image_prompts,cta')
       .eq('content_id', contentId)
       .eq('workspace_id', job.workspace_id),
   );
@@ -840,7 +846,7 @@ export async function regenerate(job: Job) {
 
     // 5. Reconstruct prompt context faithfully using original settings snapshot + visual knowledge base
     const visualKnowledge = await getAgentVisualKnowledge(agent);
-    const exactLogoPolicy = await getExactAssetPolicy(agent);
+    const exactLogoPolicy = await getExactAssetPolicy(agent, ratio);
     const exactAssetGuidance = exactLogoPolicy.guidance;
     const visualReferences = await selectSceneVisualReferences({
       agent,
@@ -860,6 +866,7 @@ export async function regenerate(job: Job) {
       visualKnowledge: visualKnowledge || undefined,
       exactAssetGuidance: exactAssetGuidance || undefined,
       exactLogoPolicy,
+      cta: variant.cta,
     });
 
     const ai = new AIService(job.workspace_id, job.id, agent.id);

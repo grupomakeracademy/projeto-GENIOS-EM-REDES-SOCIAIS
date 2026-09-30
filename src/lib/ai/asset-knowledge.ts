@@ -664,7 +664,7 @@ export async function selectSceneVisualReferences(params: {
 /**
  * Checks if the agent has any active exact asset (like official logo) to instruct prompt generation.
  */
-export async function getExactAssetPolicy(agent: Agent): Promise<ExactLogoPolicy & { guidance: string }> {
+export async function getExactAssetPolicy(agent: Agent, finalRatio = '1:1'): Promise<ExactLogoPolicy & { guidance: string }> {
   const exactAssets = await resolveExactAssets(agent);
   const brandNames = [agent.name, ...Object.entries(agent.briefing || {})
     .filter(([key]) => /^(company|company_name|brand|brand_name|business_name|nome_empresa|nome_marca)$/i.test(key))
@@ -683,9 +683,26 @@ export async function getExactAssetPolicy(agent: Agent): Promise<ExactLogoPolicy
     const logo = exactAssets.find(a => !a.asset_subtype || a.asset_subtype === 'logo')!;
     const horizontal = logo.placement?.includes('right') ? 'right' : 'left';
     const vertical = logo.placement?.includes('bottom') ? 'bottom' : 'top';
-    const widthPercent = Math.min(65, Math.max(30, (logo.scale_percent || 22) + 10));
-    const textBand = vertical === 'bottom' ? 'upper 70%' : 'lower 70%';
-    const overlayExclusion = `OFFICIAL EXACT ASSET OVERLAY EXCLUSION: reserve the ${horizontal}most ${widthPercent}% of the canvas width and the ${vertical}most 30% of its height for the original overlay. Place EVERY headline, subtitle, CTA, caption and other required word entirely in the ${textBand} of the final frame; no text may cross into the overlay band. Background, scenery and ordinary objects must still fill the entire frame, including its edges and the overlay band. Do not generate brand marks, isolated brand names or branded mascots in the lower 30%. The original exact asset will be overlaid after image generation.`;
+    const scale = logo.scale_percent || 20;
+    const [ratioWidth, ratioHeight] = finalRatio.split(':').map(Number);
+    let overlayHeightPercent: number | undefined;
+    if (ratioWidth > 0 && ratioHeight > 0 && logo.storage_path) {
+      try {
+        const download = await adminClient().storage.from('brand-assets').download(logo.storage_path);
+        if (!download.error && download.data) {
+          const metadata = await sharp(Buffer.from(await download.data.arrayBuffer())).metadata();
+          if (metadata.width && metadata.height)
+            overlayHeightPercent = scale * metadata.height / metadata.width * ratioWidth / ratioHeight;
+        }
+      } catch {
+        // The existing conservative reservation remains usable if metadata is unavailable.
+      }
+    }
+    // Match the compositing scale and its 5% margins. The extra 3% keeps text
+    // clear of the original file without reserving a broad empty footer band.
+    const widthEnd = Math.min(100, Math.round(5 + scale + 3));
+    const heightEnd = Math.min(100, Math.round(5 + (overlayHeightPercent ?? 25) + 3));
+    const overlayExclusion = `OFFICIAL EXACT ASSET OVERLAY EXCLUSION: the original overlay occupies the ${horizontal} edge from 5% to ${Math.round(5 + scale)}% of final-frame width and the ${vertical} edge from 5% to ${Math.round(5 + (overlayHeightPercent ?? 25))}% of final-frame height. Keep required text outside its protected rectangle (through ${widthEnd}% from the ${horizontal} and ${heightEnd}% from the ${vertical}, including clearance). Do not reserve the entire footer or remove a requested CTA. If a CTA is placed in the footer, it must be on the RIGHT only, never center or left; above the footer it may appear wherever the composition works, outside the overlay rectangle and text safe area. Background, scenery, lighting and secondary decoration fill the entire frame, including behind the protected rectangle. Do not generate graphic brand marks, isolated brand-name signatures or branded mascots there. The original exact asset will be overlaid after image generation.`;
     return { hasExactLogoAsset: true, brandNames, guidance: [
       'REGRA MANDATÓRIA DE MARCA — PROIBIDO GERAR LOGOTIPO:',
       '• Não desenhe, não gere, não recrie, não invente, não estilize e não alucine nenhum logotipo, wordmark, selo de marca ou assinatura visual na imagem.',
@@ -694,7 +711,7 @@ export async function getExactAssetPolicy(agent: Agent): Promise<ExactLogoPolicy
       '• Não escreva o nome da marca como elemento gráfico decorativo.',
       '• Não crie variações tipográficas da marca.',
       '• Não adicione logotipo em cantos, rodapés, embalagens, telas, objetos, cadernos, uniformes, canecas ou qualquer outro elemento da cena.',
-      `• Quando a composição normalmente pedir marca visual, mantenha a área (${placementText}) completamente limpa e neutra.`,
+      `• Quando a composição pedir marca visual, mantenha apenas o espaço ocupado pelo Asset Exato (${placementText}) livre de textos e elementos editoriais; o fundo e os detalhes decorativos continuam até as bordas.`,
       '• O logotipo oficial será aplicado posteriormente em pós-produção a partir do arquivo original cadastrado.',
       '• Diferenciação obrigatória: nome da marca solicitado explicitamente em título, subtítulo, CTA ou frase editorial = permitido e deve ser preservado literalmente; logotipo / selo / assinatura visual = terminantemente proibido para a IA.',
       '• Portanto, a imagem gerada pela IA deve sair sem nenhum logotipo ou símbolo de marca embutido.',
