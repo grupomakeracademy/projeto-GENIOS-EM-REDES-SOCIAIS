@@ -23,7 +23,7 @@ import {
   type Agent,
   type Content,
   type Channel,
-  QUALITY_MULTIPLIERS,
+  contentGenerationQuota,
   MAX_CONTENT_INSTRUCTION_LENGTH,
   publicationChannels,
   publicationRatio,
@@ -641,10 +641,8 @@ export function ContentFormModal({
               <span>
                 o total de conteúdos consumidos será{' '}
                 <strong>
-                  {imageCount *
-                    selectedChannels.length *
-                    (QUALITY_MULTIPLIERS[imageQuality] ?? 1) *
-                    (referenceAssetId || pendingReferenceFile ? 2 : 1)}
+                  {contentGenerationQuota(imageCount, selectedChannels.length, imageQuality,
+                    Boolean(referenceAssetId || pendingReferenceFile))}
                 </strong>
               </span>
             </div>

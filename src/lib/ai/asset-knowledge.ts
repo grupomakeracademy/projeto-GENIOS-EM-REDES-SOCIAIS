@@ -684,10 +684,13 @@ export async function getExactAssetPolicy(agent: Agent): Promise<ExactLogoPolicy
     const horizontal = logo.placement?.includes('right') ? 'right' : 'left';
     const vertical = logo.placement?.includes('bottom') ? 'bottom' : 'top';
     const widthPercent = Math.min(65, Math.max(30, (logo.scale_percent || 22) + 10));
-    const overlayExclusion = `OFFICIAL LOGO OVERLAY EXCLUSION: reserve the ${horizontal}most ${widthPercent}% of the canvas width and the ${vertical}most 28% of its height as background ONLY. No headline, letter, CTA, face or other essential element may overlap this corner rectangle. Move the entire headline below this zone or start every line beyond it. The original logo will be overlaid there after image generation.`;
+    const textBand = vertical === 'bottom' ? 'upper 70%' : 'lower 70%';
+    const overlayExclusion = `OFFICIAL EXACT ASSET OVERLAY EXCLUSION: reserve the ${horizontal}most ${widthPercent}% of the canvas width and the ${vertical}most 30% of its height for the original overlay. Place EVERY headline, subtitle, CTA, caption and other required word entirely in the ${textBand} of the final frame; no text may cross into the overlay band. Background, scenery and ordinary objects must still fill the entire frame, including its edges and the overlay band. Do not generate brand marks, isolated brand names or branded mascots in the lower 30%. The original exact asset will be overlaid after image generation.`;
     return { hasExactLogoAsset: true, brandNames, guidance: [
       'REGRA MANDATÓRIA DE MARCA — PROIBIDO GERAR LOGOTIPO:',
       '• Não desenhe, não gere, não recrie, não invente, não estilize e não alucine nenhum logotipo, wordmark, selo de marca ou assinatura visual na imagem.',
+      '• Não gere o mascote oficial nem uma imitação dele. Ele faz parte do Asset Exato e será aplicado a partir do arquivo original.',
+      '• Não escreva o nome da marca isolado como assinatura ou selo, inclusive na faixa inferior de 30% da imagem.',
       '• Não escreva o nome da marca como elemento gráfico decorativo.',
       '• Não crie variações tipográficas da marca.',
       '• Não adicione logotipo em cantos, rodapés, embalagens, telas, objetos, cadernos, uniformes, canecas ou qualquer outro elemento da cena.',
@@ -795,7 +798,8 @@ export async function applyExactAssets(params: {
     );
     if (!composited.length) throw new Error('internal_error');
     if (composited.equals(Buffer.from(params.imageBuffer))) {
-      console.warn('[Exact Asset Composition] Composited bytes identical to source. Persisting original image.', { selectedExactAssetId: activeOverlay.id, placement: activeOverlay.placement, scale_percent: activeOverlay.scale_percent });
+      if (expectedLogo) throw new Error('internal_error');
+      console.warn('[Exact Asset Composition] Composited bytes identical to source.', { selectedExactAssetId: activeOverlay.id, placement: activeOverlay.placement, scale_percent: activeOverlay.scale_percent });
       return Buffer.isBuffer(params.imageBuffer) ? params.imageBuffer : Buffer.from(params.imageBuffer);
     }
     return composited;

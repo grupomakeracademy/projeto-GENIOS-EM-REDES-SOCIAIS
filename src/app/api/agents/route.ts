@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { agentSchema } from '@/lib/domain';
+import { requireSelectedReference } from '@/lib/ai/selected-reference';
 import { newAgentBriefing } from '@/features/agents/new-schema';
 import { requireAgent } from '@/lib/security/agent';
 import { guard, checked, fail, AppError } from '@/lib/security/context';
@@ -133,6 +134,9 @@ export async function POST(request: Request) {
     let currentQuery = db.from('agents').select('text_settings, visual_settings, workspace_id').eq('id', id);
     if (!isSuper) currentQuery = currentQuery.eq('workspace_id', ctx.workspaceId);
     const current = checked(await currentQuery.single());
+    for (const day of Object.values(input.routine_settings.weekday_settings)) {
+      if (day.reference_asset_id) await requireSelectedReference(ctx.workspaceId, id, day.reference_asset_id, true, true);
+    }
 
     if (current?.text_settings?.ai_configs !== undefined)
       input.text_settings.ai_configs = current.text_settings.ai_configs;

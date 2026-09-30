@@ -38,6 +38,16 @@ export const MAX_CONTENT_INSTRUCTION_LENGTH = 2000;
 export function contentGenerationQuota(imageCount: number, channelCount: number, quality: 'low' | 'medium' | 'high', withReference: boolean) {
   return imageCount * channelCount * (quality === 'low' ? 1 : 3) * (withReference ? 2 : 1);
 }
+export const routineWeekdaySettingsSchema = z.record(z.string().regex(/^[1-7]$/), z.object({
+  image_quality: z.enum(['low', 'medium']).optional(),
+  reference_asset_id: z.uuid().optional(),
+}));
+export type RoutineWeekdaySettings = z.infer<typeof routineWeekdaySettingsSchema>;
+export function routineWeeklyQuota(weekdays: number[], imageCount: number, channelCount: number,
+  quality: 'low' | 'medium', settings: RoutineWeekdaySettings) {
+  return weekdays.reduce((total, day) => total + contentGenerationQuota(imageCount, channelCount,
+    settings[String(day)]?.image_quality || quality, Boolean(settings[String(day)]?.reference_asset_id)), 0);
+}
 export type ImageQuality = keyof typeof QUALITY_MULTIPLIERS;
 export const imageQualitySchema = z.enum(['low', 'medium', 'high']);
 export const userImageQualitySchema = z.enum(['low', 'medium']);
@@ -106,6 +116,7 @@ export const routineSettingsSchema = z
     cta: z.string().default(''),
     destination: destinationSchema.default('feed'),
     publication_type: publicationTypeSchema.default('feed'),
+    weekday_settings: routineWeekdaySettingsSchema.default({}),
   }).refine(settings => publicationSelectionValid(settings.publication_type, settings.channels), {
     message: 'Canal incompatível com o tipo de publicação.', path: ['channels'],
   }).refine(settings => settings.publication_type !== 'stories' || settings.destination === 'stories', {
@@ -121,6 +132,7 @@ export const routineSettingsSchema = z
     cta: '',
     destination: 'feed',
     publication_type: 'feed',
+    weekday_settings: {},
   });
 
 export const agentSchema = z.object({

@@ -32,7 +32,7 @@ beforeEach(async () => {
   s.assets = [{ id, name: 'GENINHOS - LOGO 02.png (fixture)', workspace_id: 'owner-workspace', category: 'exact_asset', asset_subtype: 'logo', placement: 'bottom_left', scale_percent: 35, storage_path: 'fixture/official.png', mime_type: 'image/png' },
     { id: 'unrelated', workspace_id: 'agent-workspace', category: 'exact_asset', asset_subtype: 'logo', placement: 'top_right', scale_percent: 20 }];
   s.overlay = await sharp({ create: { width: 200, height: 100, channels: 3, background: 'red' } }).png().toBuffer();
-  s.raw = await sharp({ create: { width: 1000, height: 1500, channels: 3, background: 'white' } }).png().toBuffer();
+  s.raw = await sharp({ create: { width: 1200, height: 1500, channels: 3, background: 'white' } }).png().toBuffer();
 });
 afterEach(() => { expect(fetch).not.toHaveBeenCalled(); vi.unstubAllGlobals(); });
 it('resolves only the explicitly linked logo even when shared from another workspace', async () => {
@@ -41,7 +41,7 @@ it('resolves only the explicitly linked logo even when shared from another works
   expect((await getExactAssetPolicy(agent)).hasExactLogoAsset).toBe(true);
 });
 it.each(['manual','routine','regeneration'])('composes and persists the shared %s image stage at bottom_left / 35%%', async flow => {
-  const raw = await sharp({ create: { width: 1000, height: 1500, channels: 3, background: 'white' } }).png().toBuffer();
+  const raw = await sharp({ create: { width: 1200, height: 1500, channels: 3, background: 'white' } }).png().toBuffer();
   const res = await saveCompositedImage({ agent, bytes: raw, mime: 'image/png', channel: 'instagram', ratio: '4:5', expectedLogo: true,
     originalPath: `${flow}-original.png`, finalPath: `${flow}-final.png` });
   expect(s.files.get(`${flow}-original.png`)).toEqual(raw);
@@ -49,10 +49,10 @@ it.each(['manual','routine','regeneration'])('composes and persists the shared %
   expect(final.equals(raw)).toBe(false);
   const { data, info } = await sharp(final).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const pixel = (x: number, y: number) => [...data.subarray((y * info.width + x) * 3, (y * info.width + x) * 3 + 3)];
-  // The provider original remains 1000x1500; the final 4:5 image is 1000x1250.
-  expect([info.width, info.height]).toEqual([1000,1250]);
-  expect(pixel(50,1012)).toEqual([255,0,0]); expect(pixel(399,1186)).toEqual([255,0,0]);
-  expect(pixel(400,1187)).toEqual([255,255,255]); expect(pixel(50,100)).toEqual([255,255,255]);
+  // Native 4:5 dimensions survive unchanged before the original logo is overlaid.
+  expect([info.width, info.height]).toEqual([1200,1500]);
+  expect(pixel(60,1215)).toEqual([255,0,0]); expect(pixel(479,1424)).toEqual([255,0,0]);
+  expect(pixel(480,1425)).toEqual([255,255,255]); expect(pixel(50,100)).toEqual([255,255,255]);
 });
 it.each(['missing','download','manual','duplicate'])('fails before saving when expected logo is %s', async failure => {
   if (failure === 'missing') s.assets = [];

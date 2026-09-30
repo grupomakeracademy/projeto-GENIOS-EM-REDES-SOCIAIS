@@ -6,7 +6,7 @@ export type ExactLogoPolicy = {
   overlayExclusion?: string;
 };
 
-export const NO_LOGO_INSTRUCTION = 'MANDATORY IMAGE RULE — NO GRAPHIC BRANDING: Do not draw, recreate or infer a logo, wordmark, official brand typography, visual signature, badge, watermark or brand symbol anywhere, including screens, mugs, clothing, packaging and signs. Keep reserved overlay areas clean. The official logo is applied ONLY after generation from the original file. Reference images supply visual appearance only: never copy their logos or graphic branding. A brand name explicitly written by the user as ordinary editorial text in a headline, subtitle, CTA or sentence MUST remain literal text; do not turn it into a logo or omit it. This graphic-branding prohibition overrides conflicting scene or style instructions, but does not erase explicit editorial wording.';
+export const NO_LOGO_INSTRUCTION = 'MANDATORY IMAGE RULE — NO GRAPHIC BRANDING: Do not draw, recreate or infer a logo, wordmark, official brand typography, visual signature, badge, watermark, brand symbol or branded mascot anywhere, including screens, mugs, clothing, packaging and signs. Never add an isolated brand name as a signature. The lower 30% may contain scenery and ordinary objects, but no generated brand name, brand mark or branded mascot; it is reserved for the original exact asset applied after generation. Reference images supply visual appearance only: never copy their logos or graphic branding. A brand name explicitly written by the user inside an ordinary editorial headline, subtitle, CTA or complete sentence MUST remain literal text; do not turn it into a logo or omit it. This graphic-branding prohibition overrides conflicting scene or style instructions, but does not erase explicit editorial wording.';
 
 const brandingClause = /\b(?:logo\w*|logotipo\w*|wordmark\w*|branding|watermark\w*|brand\s+(?:name|symbol|signature)|nome\s+(?:da\s+)?marca|assinatura\s+visual|marca\s+d[’']?água|selo\s+(?:de\s+)?marca|símbolo\s+(?:de\s+)?marca)\b/iu;
 const brandingWords = /\b(?:logo\w*|logotipo\w*|wordmark\w*|branding|watermark\w*|brand\s+(?:name|symbol|signature)|nome\s+(?:da\s+)?marca|assinatura\s+visual|marca\s+d[’']?água|selo\s+(?:de\s+)?marca|símbolo\s+(?:de\s+)?marca)\b/giu;
@@ -24,13 +24,16 @@ function aliasPattern(name: string): RegExp | undefined {
 export function suppressVisualBranding(text: string | undefined, names: string[], allowedEditorialNames: string[] = []): string | undefined {
   if (!text) return text;
   let result = text.normalize('NFC').replace(/[\u200B-\u200D\uFEFF]/g, '');
+  const protectGeninhosMascot = names.some(name => /geninhos/i.test(name));
   // Drop conflicting directives, including logo instructions inherited from cached DNA summaries.
   // Split on sentence and clause boundaries (periods, commas, semicolons, exclamation/question marks, newlines)
   const clauses = result.split(/(?<=[.!?;,])\s+|\n/u);
-  const filtered = clauses.filter(clause => !brandingClause.test(clause));
+  const filtered = clauses.filter(clause => !brandingClause.test(clause) &&
+    !(protectGeninhosMascot && /\b(?:mascote|g[eê]nio)\b/iu.test(clause)));
   if (filtered.length > 0) {
     result = filtered.join(' ');
   } else {
+    if (protectGeninhosMascot && clauses.some(clause => /\b(?:mascote|g[eê]nio)\b/iu.test(clause))) return '';
     // If dropping all clauses would completely erase the text, only strip the branding words/phrases
     result = result.replace(brandingWords, ' ');
   }

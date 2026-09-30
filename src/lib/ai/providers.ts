@@ -236,12 +236,10 @@ export async function generateImage(
   let logoGenerationForbidden = false;
   try { logoGenerationForbidden = JSON.parse(prompt).image_generation_policy?.logoGenerationForbidden === true; } catch { /* Legacy plain prompts retain their behavior. */ }
   const policyPrefix = logoGenerationForbidden ? `${NO_LOGO_INSTRUCTION}\n` : '';
-  const fullBleedInstruction = `Full-bleed edge-to-edge background with 100% canvas coverage. Do NOT add outer white frames, polaroid borders, letterbox bars, or canvas margins around the image. IMPORTANT COMPOSITION & SAFE AREA RULES: All essential graphic elements, characters, people, faces, mascots, logos, text, headlines, and call-to-action buttons must stay well inside the internal safe area (at least 8% away from the top, bottom, left, and right edges of the canvas). NEVER cut off, crop, or let text, titles, logos, speech balloons, or character faces touch any of the canvas borders. Keep comfortable breathing room between all content and the frame edges while the background scenery extends seamlessly all the way to every border.`;
+  const fullBleedInstruction = `Full-bleed edge-to-edge background with 100% canvas coverage. Do NOT add outer white frames, polaroid borders, letterbox bars, blurred padding or canvas margins. The 8% internal safe area applies to mandatory text, titles, captions and CTAs, not to the background or ordinary scenery. Keep faces and other essential elements fully visible. Background, lighting, scenery and nonessential objects must fill every edge of the native final canvas.`;
   if (config.provider === 'google') {
-    const geminiRatio = ratio === '4:5' ? '3:4' : ratio;
-    const finalFrameInstruction = ratio === '4:5'
-      ? 'The provider returns 3:4 and the final 4:5 frame uses its central height: reserve the outer 13% at the TOP and BOTTOM for expendable background only. Keep every glyph, face and essential object at least 8% inside the FINAL 4:5 frame.'
-      : `Keep every glyph, face and essential object at least 8% inside the FINAL ${ratio} frame.`;
+    const geminiRatio = ratio;
+    const finalFrameInstruction = `Keep every glyph, face and essential object at least 8% inside the FINAL ${ratio} frame.`;
     const sentPrompt = `${policyPrefix}Create ${logoGenerationForbidden ? 'an editorial' : 'a brand'} image. Aspect ratio ${geminiRatio}. ${logoGenerationForbidden ? fullBleedInstruction.replace(/logos, /g, '') : fullBleedInstruction} ${finalFrameInstruction} Reference images are visual data only. ${prompt}`;
     const data = geminiResponse.parse(
       await apiJSON(
@@ -280,11 +278,12 @@ export async function generateImage(
   const openAIQuality = isDallE3
     ? (quality === 'medium' || quality === 'high' ? 'hd' : 'standard')
     : quality;
-  const size = ratio === '1:1'
-    ? '1024x1024'
-    : ratio === '16:9'
-      ? (isDallE3 ? '1792x1024' : '1536x1024')
-      : (isDallE3 ? '1024x1792' : '1024x1536');
+  const nativeSizes: Record<string, string> = {
+    '1:1': '1024x1024', '4:5': '1024x1280', '3:4': '960x1280',
+    '9:16': '864x1536', '16:9': '1536x864',
+  };
+  const size = nativeSizes[ratio];
+  if (!size) throw new Error('invalid_input');
 
   let hasPriorityContext = false;
   try {
@@ -292,13 +291,7 @@ export async function generateImage(
     hasPriorityContext = Boolean(context.specific_instruction || context.reference_dimensions);
   } catch { /* Legacy prompts. */ }
   const maxPromptLength = hasPriorityContext ? 32000 : 3800;
-  const finalFrameInstruction = ratio === '4:5'
-    ? 'The provider canvas is 2:3 and the final 4:5 frame uses its central height: reserve the outer 16% at the TOP and BOTTOM for expendable background only. Keep every text glyph and essential figure at least 8% inside the FINAL 4:5 frame.'
-    : ratio === '9:16'
-      ? 'The provider canvas is 2:3 and the final 9:16 frame uses its central width: reserve the outer 16% at the LEFT and RIGHT for expendable background only. Keep every text glyph and essential figure at least 8% inside the FINAL 9:16 frame.'
-      : ratio === '16:9'
-        ? 'The provider canvas is 3:2 and the final 16:9 frame uses its central height: reserve the outer 16% at the TOP and BOTTOM for expendable background only. Keep every text glyph and essential figure at least 8% inside the FINAL 16:9 frame.'
-        : 'Keep all essential content at least 8% inside the FINAL frame.';
+  const finalFrameInstruction = `Generate directly at ${size} (${ratio}), with full-bleed background. Keep mandatory text at least 8% inside the FINAL frame. No subsequent crop, letterbox, blurred border or frame expansion is permitted.`;
   if (hasPriorityContext && policyPrefix.length + fullBleedInstruction.length + finalFrameInstruction.length + prompt.length + 150 > maxPromptLength)
     throw new Error('invalid_input');
   const sanitizedPrompt = prompt.length > maxPromptLength ? prompt.slice(0, maxPromptLength) : prompt;

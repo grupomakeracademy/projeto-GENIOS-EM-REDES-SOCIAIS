@@ -36,6 +36,8 @@ import {
   publicationChannels,
   publicationRatio,
   type PublicationType,
+  type RoutineWeekdaySettings,
+  routineWeeklyQuota,
 } from '@/lib/domain';
 import { useLocale } from '@/components/ui';
 
@@ -362,6 +364,86 @@ export function AgentEditor({
   const [routineDestination, setRoutineDestination] = useState<Destination>(
     (initialRs.destination as Destination) || 'feed',
   );
+  const [routineWeekdaySettings, setRoutineWeekdaySettings] = useState<RoutineWeekdaySettings>(
+    (initialRs.weekday_settings as RoutineWeekdaySettings) || {},
+  );
+  const [routinePendingFiles, setRoutinePendingFiles] = useState<Record<string, { file: File; url: string }>>({});
+  const [routineReferenceError, setRoutineReferenceError] = useState('');
+  const routineStagedIds = useRef<Record<string, string>>({});
+  const routineDays = Array.isArray(schedule.weekdays)
+    ? (schedule.weekdays as (number | string)[]).map(Number).filter(n => n >= 1 && n <= 7)
+    : [1, 2, 3, 4, 5];
+  const routineQuota = routineWeeklyQuota(routineDays, routineCount, routineChannels.length,
+    routineQuality, Object.fromEntries(routineDays.map(day => [String(day), {
+      ...routineWeekdaySettings[String(day)],
+      reference_asset_id: routinePendingFiles[String(day)] ? routineStagedIds.current[String(day)] || 'pending' : routineWeekdaySettings[String(day)]?.reference_asset_id,
+    }])));
+  const selectedReferenceIds = Array.isArray(selected?.visual_settings?.reference_ids)
+    ? selected.visual_settings.reference_ids as string[] : [];
+  const routineReferences = assets.filter(asset => selectedReferenceIds.includes(asset.id) &&
+    asset.category === 'reference' && asset.mime_type.startsWith('image/') &&
+    asset.processing_status === 'processed' && Boolean(asset.summary_text) &&
+    asset.asset_subtype !== 'content_reference_staged');
+
+  function chooseRoutineFile(day: number, file: File) {
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) ||
+        !/\.(png|jpe?g|webp)$/i.test(file.name) || !file.size || file.size > 10 * 1024 * 1024) {
+      setRoutineReferenceError('Envie uma imagem PNG, JPG ou WebP válida de até 10 MB.');
+      return;
+    }
+    const key = String(day);
+    if (routinePendingFiles[key]) URL.revokeObjectURL(routinePendingFiles[key].url);
+    delete routineStagedIds.current[key];
+    setRoutinePendingFiles(prev => ({ ...prev, [key]: { file, url: URL.createObjectURL(file) } }));
+    setRoutineWeekdaySettings(prev => ({ ...prev, [key]: { ...prev[key], reference_asset_id: undefined } }));
+    setRoutineReferenceError('');
+  }
+
+  async function stageRoutineReferences(agentId: string, onlyDay?: number) {
+    const settings = { ...routineWeekdaySettings };
+    const uploadedIds: string[] = [];
+    for (const [day, pending] of Object.entries(routinePendingFiles)) {
+      if (onlyDay && Number(day) !== onlyDay) continue;
+      let id = routineStagedIds.current[day];
+      if (!id) {
+        const data = new FormData();
+        data.set('file', pending.file);
+        data.set('category', 'reference');
+        data.set('source', 'content_reference');
+        const uploaded = await api('assets', 'POST', data);
+        id = uploaded.id;
+        routineStagedIds.current[day] = id;
+      }
+      await api('assets', 'PATCH', { action: 'associate', id, agent_ids: [agentId] });
+      settings[day] = { ...settings[day], reference_asset_id: id };
+      uploadedIds.push(id);
+    }
+    return { settings, uploadedIds };
+  }
+
+  async function persistRoutineForRun(agent: Agent, day: number) {
+    const { settings, uploadedIds } = await stageRoutineReferences(agent.id, day);
+    const saved = await api('agents', 'POST', {
+      ...agent,
+      visual_settings: { ...agent.visual_settings,
+        reference_ids: [...new Set([...(agent.visual_settings.reference_ids as string[] || []), ...uploadedIds])] },
+      text_settings: Object.fromEntries(Object.entries(agent.text_settings).filter(([key]) => key !== 'ai_configs')),
+      routine_settings: {
+        image_style: routineStyle, instruction: routineInstruction, channels: routineChannels,
+        image_quality: routineQuality, image_count: routineCount,
+        is_carousel: routineCount > 1 && routineIsCarousel, cta: routineCta,
+        destination: routineDestination, publication_type: routinePublicationType,
+        weekday_settings: settings,
+      },
+      id: agent.id,
+    });
+    setSelected(saved);
+    setRoutineWeekdaySettings(settings);
+    if (routinePendingFiles[String(day)]) {
+      setRoutinePendingFiles(prev => { const next = { ...prev }; delete next[String(day)]; return next; });
+    }
+    router.refresh();
+  }
 
   // Dynamic destinations based on selected channels
   const supportedRoutineDestinations: Destination[] = routinePublicationType === 'stories'
@@ -402,6 +484,9 @@ export function AgentEditor({
     setRoutineIsCarousel(Boolean(rs.is_carousel) && Number(rs.image_count) > 1);
     setRoutineCta((rs.cta as string) || '');
     setRoutineDestination((rs.destination as Destination) || 'feed');
+    setRoutineWeekdaySettings((rs.weekday_settings as RoutineWeekdaySettings) || {});
+    setRoutinePendingFiles({});
+    routineStagedIds.current = {};
     setRoutinePautaMagicUsed(false);
     setRoutineCtaMagicUsed(false);
     setRoutineMagicError('');
@@ -505,8 +590,12 @@ export function AgentEditor({
             busy={action.busy}
             onClick={() =>
               action.act(async () => {
+                const weekday = Number(new Intl.DateTimeFormat('en-US', { timeZone: String(schedule.timezone || 'America/Sao_Paulo'), weekday: 'short' })
+                  .format(new Date()).toLowerCase().replace(/^mon$/, '1').replace(/^tue$/, '2').replace(/^wed$/, '3').replace(/^thu$/, '4').replace(/^fri$/, '5').replace(/^sat$/, '6').replace(/^sun$/, '7'));
+                await persistRoutineForRun(selected, weekday);
                 await api('runs', 'POST', {
                   agent_id: selected.id,
+                  routine_weekday: weekday,
                   instruction: routineInstruction,
                   channels: routineChannels,
                   publication_type: routinePublicationType,
@@ -1021,6 +1110,64 @@ export function AgentEditor({
                             onChange={(weekdays) => setSchedule({ ...schedule, weekdays })}
                           />
                         </div>
+                        <div className="field" style={{ gridColumn: '1 / -1' }}>
+                          <span>Imagem de referência por dia</span>
+                          {routineDays.map(day => {
+                            const key = String(day);
+                            const config = routineWeekdaySettings[key] || {};
+                            const pending = routinePendingFiles[key];
+                            const chosen = assets.find(asset => asset.id === config.reference_asset_id);
+                            return <div key={day} className="routine-day-reference">
+                              <strong>{WEEKDAY_OPTIONS.find(option => option.value === day)?.label}</strong>
+                              <div className="routine-day-reference-controls">
+                                <details className="new-content-reference-picker">
+                                  <summary>{pending?.file.name || chosen?.name || 'Sem referência'}</summary>
+                                  <div className="new-content-reference-list" role="listbox" aria-label={`Biblioteca de referências de ${WEEKDAY_OPTIONS.find(option => option.value === day)?.label}`}>
+                                    <button type="button" role="option" aria-selected={!pending && !chosen} disabled={!canEdit}
+                                      onClick={event => {
+                                        if (pending) URL.revokeObjectURL(pending.url);
+                                        setRoutinePendingFiles(prev => { const next = { ...prev }; delete next[key]; return next; });
+                                        setRoutineWeekdaySettings(prev => ({ ...prev, [key]: { ...prev[key], reference_asset_id: undefined } }));
+                                        (event.currentTarget.closest('details') as HTMLDetailsElement).open = false;
+                                      }}><span className="new-content-reference-thumb"><FileText size={22} /></span><span>Sem referência</span></button>
+                                    {routineReferences.map(asset => <button type="button" role="option" key={asset.id} aria-selected={!pending && config.reference_asset_id === asset.id} disabled={!canEdit}
+                                      onClick={event => {
+                                        if (pending) URL.revokeObjectURL(pending.url);
+                                        setRoutinePendingFiles(prev => { const next = { ...prev }; delete next[key]; return next; });
+                                        setRoutineWeekdaySettings(prev => ({ ...prev, [key]: { ...prev[key], reference_asset_id: asset.id } }));
+                                        (event.currentTarget.closest('details') as HTMLDetailsElement).open = false;
+                                      }}>
+                                      <span className="new-content-reference-thumb"><FileText size={22} />{asset.url && <img src={asset.url} alt="" width={64} height={56} loading="lazy" onError={event => { event.currentTarget.hidden = true; }} />}</span>
+                                      <span className="new-content-reference-name">{asset.name}</span>
+                                    </button>)}
+                                  </div>
+                                </details>
+                                <label className="new-content-reference-upload">
+                                  <input type="file" accept="image/png,image/jpeg,image/webp" disabled={!canEdit}
+                                    onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) chooseRoutineFile(day, file); }} />
+                                </label>
+                                <select disabled={!canEdit} aria-label={`Qualidade de ${WEEKDAY_OPTIONS.find(option => option.value === day)?.label}`}
+                                  value={config.image_quality || 'default'}
+                                  onChange={event => setRoutineWeekdaySettings(prev => ({ ...prev, [key]: {
+                                    ...prev[key], image_quality: event.target.value === 'default' ? undefined : event.target.value as 'low' | 'medium',
+                                  } }))}>
+                                  <option value="default">Qualidade geral ({routineQuality === 'low' ? 'Padrão' : 'Premium'})</option>
+                                  <option value="low">Padrão</option><option value="medium">Premium</option>
+                                </select>
+                              </div>
+                              {(pending || chosen) && <div className="routine-day-reference-preview">
+                                {(pending?.url || chosen?.url) ? <img src={pending?.url || chosen?.url} alt={pending?.file.name || chosen?.name || ''} /> : <FileText size={24} />}
+                                <span>{pending?.file.name || chosen?.name}</span>
+                                <button type="button" disabled={!canEdit} onClick={() => {
+                                  if (pending) URL.revokeObjectURL(pending.url);
+                                  setRoutinePendingFiles(prev => { const next = { ...prev }; delete next[key]; return next; });
+                                  setRoutineWeekdaySettings(prev => ({ ...prev, [key]: { ...prev[key], reference_asset_id: undefined } }));
+                                }}>Remover</button>
+                              </div>}
+                            </div>;
+                          })}
+                          {routineReferenceError && <Notice message={routineReferenceError} error />}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1211,9 +1358,7 @@ export function AgentEditor({
                             <span>
                               o total de conteúdos consumidos será{' '}
                               <strong>
-                                {routineCount *
-                                  routineChannels.length *
-                                  (routineQuality === 'medium' ? 3 : 1)}
+                                {routineQuota}
                               </strong>
                             </span>
                           </div>
@@ -1345,11 +1490,15 @@ export function AgentEditor({
                               cta: routineCta,
                               destination: routineDestination,
                               publication_type: routinePublicationType,
+                              weekday_settings: (await stageRoutineReferences(selected.id)).settings,
                             }
                           : ((selected.routine_settings as Record<string, unknown>) || {});
 
+                      const newlyStagedIds = Object.values(routineStagedIds.current);
                       const saved = await api('agents', 'POST', {
                         ...selected,
+                        visual_settings: { ...selected.visual_settings,
+                          reference_ids: [...new Set([...(selected.visual_settings.reference_ids as string[] || []), ...newlyStagedIds])] },
                         routine_settings: routineSettingsToSave,
                         text_settings: Object.fromEntries(
                           Object.entries(selected.text_settings).filter(
@@ -1381,6 +1530,8 @@ export function AgentEditor({
                           weekdays: parsedWeekdays.length ? parsedWeekdays : [1, 2, 3, 4, 5],
                           enabled: Boolean(schedule.enabled && selected.active),
                         }));
+                        setRoutineWeekdaySettings(routineSettingsToSave.weekday_settings as RoutineWeekdaySettings);
+                        setRoutinePendingFiles({});
                       }
                       setSelected(saved);
                       router.refresh();

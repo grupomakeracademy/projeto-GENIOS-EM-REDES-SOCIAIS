@@ -33,7 +33,7 @@ describe('Image logo protection (network always mocked)', () => {
     expect(parsed.brand).toBeUndefined();
     expect(parsed.image_generation_policy.instruction).toBe(NO_LOGO_INSTRUCTION);
     expect(parsed.overlay_exclusion_zone).toContain('leftmost 30%');
-    expect(parsed.overlay_exclusion_zone).toContain('topmost 28%');
+    expect(parsed.overlay_exclusion_zone).toContain('topmost 30%');
     for (const field of ['scene', 'style', 'brand_visual_dna']) {
       expect(parsed[field]).not.toMatch(/g[eê]nios|educa|logo|wordmark/iu);
     }
@@ -62,9 +62,13 @@ describe('Image logo protection (network always mocked)', () => {
     expect(finalPrompt.startsWith(NO_LOGO_INSTRUCTION)).toBe(true);
     expect(finalPrompt).not.toContain('Create a brand image');
     expect(finalPrompt).toContain(provider === 'openai'
-      ? 'outer 16% at the TOP and BOTTOM'
-      : 'outer 13% at the TOP and BOTTOM');
-    if (provider === 'openai') expect(finalPrompt.length).toBeLessThanOrEqual(3800);
+      ? 'No subsequent crop, letterbox, blurred border or frame expansion'
+      : 'FINAL 4:5 frame');
+    if (provider === 'google') expect(body.generationConfig.imageConfig.aspectRatio).toBe('4:5');
+    if (provider === 'openai') {
+      expect(finalPrompt.length).toBeLessThanOrEqual(3800);
+      expect(body.size).toBe('1024x1280');
+    }
     expect(fetchMock).toHaveBeenCalledTimes(1); // local stub only, never a real request
   });
 
@@ -107,7 +111,7 @@ describe('Image logo protection (network always mocked)', () => {
     };
     const context = JSON.parse(buildImagePromptContext(params));
     expect(context.scene).toContain('Criança de 12 anos sentada numa mesa moderna de estudos');
-    expect(context.scene).toContain('mascote azul feliz próximo');
+    expect(context.scene).not.toContain('mascote azul feliz próximo');
     expect(context.scene).not.toMatch(/logos|geninhos/i);
   });
 
@@ -128,6 +132,22 @@ describe('Image logo protection (network always mocked)', () => {
     const sent = JSON.parse(fetchMock.mock.calls[0][1].body).prompt as string;
     expect(sent).toContain('GENINHOS!');
     expect(sent).toContain('NO GRAPHIC BRANDING');
-    expect(sent).toContain('outer 16% at the TOP and BOTTOM');
+    expect(sent).toContain('Generate directly at 1024x1280 (4:5)');
+  });
+
+  it('keeps Geninhos in an editorial sentence without sending mascot or logo cues from persisted DNA', () => {
+    const prompt = buildImagePromptContext({
+      prompt: 'Uma criança resolve uma dúvida com um professor. O mascote azul Geninhos aponta para a tela. Título editorial: Aprenda com o Geninhos.',
+      instruction: 'Mostre uma criança estudando. O mascote azul a acompanha. Título editorial: Aprenda com o Geninhos.',
+      selectedReferenceSummary: 'Estilo 3D educativo. Logotipo Geninhos no rodapé. Mascote azul sorridente. Paleta azul e amarelo.',
+      visualKnowledge: 'Criança estudando. Gênio azul ao lado. Símbolos/Logos: GENINHOS.',
+      channel: 'instagram', position: 0, ratio: '4:5', companyOrName: 'Geninhos',
+      exactLogoPolicy: { hasExactLogoAsset: true, brandNames: ['Geninhos'] },
+    });
+    const parsed = JSON.parse(prompt);
+    expect(parsed.specific_instruction).toContain('Aprenda com o Geninhos');
+    for (const field of ['scene', 'specific_instruction', 'selected_reference_visual_guidance', 'brand_visual_dna']) {
+      expect(parsed[field] || '').not.toMatch(/mascote|g[eê]nio azul|logotipo/i);
+    }
   });
 });

@@ -23,6 +23,18 @@ it('sends reference images through the image edit endpoint as multipart data', a
   expect(request.body.getAll('image[]')).toHaveLength(1);
   expect(request.headers).not.toHaveProperty('Content-Type');
 });
+it.each([
+  ['1:1', '1024x1024'], ['4:5', '1024x1280'], ['3:4', '960x1280'],
+  ['9:16', '864x1536'], ['16:9', '1536x864'],
+])('requests a native %s image without a normalization crop', async (ratio, size) => {
+  const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ b64_json: 'aW1hZ2U=' }] })));
+  vi.stubGlobal('fetch', fetcher);
+  await generateImage({ provider: 'openai', purpose: 'image', model: 'gpt-image-2.5-flare' },
+    'test-key', 'Educational scene', ratio);
+  const request = JSON.parse(fetcher.mock.calls[0][1].body);
+  expect(request.size).toBe(size);
+  expect(request.prompt).toContain(`(${ratio})`);
+});
 it('validates OpenAI structured responses and usage', async () => {
   const fetcher = vi.fn().mockResolvedValue(
     new Response(

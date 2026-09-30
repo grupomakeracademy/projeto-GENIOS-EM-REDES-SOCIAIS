@@ -6,6 +6,8 @@ import {
   channels,
   type Channel,
   statuses,
+  contentGenerationQuota,
+  routineWeeklyQuota,
 } from '@/lib/domain';
 import { buildImagePromptContext } from '@/lib/jobs/pipeline';
 
@@ -63,6 +65,32 @@ describe('Routine, Content & Central Quota System', () => {
 
     // 2 images * 6 channels * Padrão (1x) = 12 cotas (example in prompt item 31)
     expect(calculateQuota(2, allChannels, 'low')).toBe(12);
+  });
+
+  it('uses the same per-image quota for manual and weekday routine configurations', () => {
+    for (const quality of ['low', 'medium'] as const) {
+      for (const channels of [1, 2, 3]) {
+        for (const count of [1, 2, 3, 4, 5, 6]) {
+          for (const withReference of [false, true]) {
+            const reference_asset_id = withReference ? 'a5dca7b7-5f88-499b-8e5d-91933860e7cd' : undefined;
+            expect(routineWeeklyQuota([1], count, channels, quality, { '1': { reference_asset_id } }))
+              .toBe(contentGenerationQuota(count, channels, quality, withReference));
+          }
+        }
+      }
+    }
+    const reference_asset_id = 'a5dca7b7-5f88-499b-8e5d-91933860e7cd';
+    expect(routineWeeklyQuota([1,2,3,4,5], 1, 1, 'low', {
+      '1': { reference_asset_id }, '3': { reference_asset_id }, '5': { reference_asset_id },
+    })).toBe(8);
+    expect(routineWeeklyQuota([1,2,3,4,5], 1, 2, 'low', {
+      '2': { reference_asset_id }, '4': { reference_asset_id },
+    })).toBe(14);
+    expect(routineWeeklyQuota([1,2,3,4,5,6,7], 1, 3, 'low', {
+      '1': { reference_asset_id }, '2': { reference_asset_id }, '3': { reference_asset_id },
+      '4': { reference_asset_id }, '5': { reference_asset_id },
+      '6': { image_quality: 'medium' }, '7': { image_quality: 'medium' },
+    })).toBe(48);
   });
 
   it('verifies ROUTINE status exists between DRAFT and GENERATING in visual sequence', () => {

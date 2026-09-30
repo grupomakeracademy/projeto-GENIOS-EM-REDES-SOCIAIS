@@ -88,6 +88,7 @@ export async function POST(request: Request) {
         is_carousel: z.boolean().optional(),
         cta: z.string().max(500).optional(),
         reference_asset_id: z.uuid().optional(),
+        routine_weekday: z.number().int().min(1).max(7).optional(),
         idempotency_key: z.uuid(),
       })
       .parse(raw);
@@ -117,13 +118,19 @@ export async function POST(request: Request) {
     const agent = checked(
       await ctx.db
         .from('agents')
-        .select('id')
+        .select('id,routine_settings')
         .eq('id', input.agent_id)
         .eq('workspace_id', ctx.workspaceId)
         .maybeSingle(),
     );
     if (!agent) throw new AppError('forbidden', 403);
-    const selectedReference = await requireSelectedReference(ctx.workspaceId, input.agent_id, input.reference_asset_id, true);
+    if (input.routine_weekday) {
+      const weekday = agent.routine_settings?.weekday_settings?.[String(input.routine_weekday)] || {};
+      input.reference_asset_id = weekday.reference_asset_id || undefined;
+      input.image_quality = weekday.image_quality || agent.routine_settings?.image_quality || 'low';
+    }
+    const selectedReference = await requireSelectedReference(ctx.workspaceId, input.agent_id,
+      input.reference_asset_id, true, Boolean(input.routine_weekday));
 
     const count = typeof input.image_count === 'number' && input.image_count > 0 ? input.image_count : 1;
     const requiredQuota = contentGenerationQuota(count, input.channels.length, input.image_quality || 'low', Boolean(input.reference_asset_id));

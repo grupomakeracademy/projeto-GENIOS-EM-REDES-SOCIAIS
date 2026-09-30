@@ -30,6 +30,7 @@ import {
 } from '@/lib/ai/asset-knowledge';
 import { saveCompositedImage } from './save-composited-image';
 import { requireSelectedReference } from '@/lib/ai/selected-reference';
+import { processAssetKnowledge } from '@/lib/ai/asset-knowledge';
 import { NO_LOGO_INSTRUCTION, suppressVisualBranding, explicitlyRequestedBrandNames, type ExactLogoPolicy } from '@/lib/ai/image-logo-policy';
 export const jobSchema = z.object({
   id: z.uuid(),
@@ -79,6 +80,9 @@ export function buildImagePromptContext(params: {
   const names = [...(params.exactLogoPolicy?.brandNames || []), params.companyOrName || ''];
   const clean = (value: string | undefined) => hasExactLogoGuidance ? suppressVisualBranding(value, names) : value;
   const editorialNames = explicitlyRequestedBrandNames(params.instruction, names);
+  const imageInstruction = hasExactLogoGuidance
+    ? suppressVisualBranding(params.instruction, names, editorialNames)
+    : params.instruction;
   // Sanitize before truncation so a cut-off name/directive cannot escape the filter.
   const scene = hasExactLogoGuidance
     ? suppressVisualBranding(params.prompt, names, editorialNames)
@@ -102,7 +106,7 @@ export function buildImagePromptContext(params: {
     instruction_hierarchy: params.instruction?.trim()
       ? 'Technical and safety rules first. The specific instruction defines the scene and exact editorial wording. The destination ratio and preservation of mandatory content come next. The selected reference and agent DNA guide appearance only. The generic scene is subordinate and must never contradict the specific instruction.'
       : undefined,
-    specific_instruction: params.instruction?.trim() || undefined,
+    specific_instruction: imageInstruction?.trim() || undefined,
     editorial_text_rule: params.instruction?.trim()
       ? 'Preserve every word and explicitly requested brand name as ordinary editorial text. Reflow lines, reduce type size and move characters before omitting or clipping any requested text. Never interpret an editorial brand name as a request to draw a logo.'
       : undefined,
@@ -120,7 +124,7 @@ export function buildImagePromptContext(params: {
     brand: hasExactLogoGuidance ? undefined : (params.companyOrName || undefined),
     brand_visual_dna: clean(params.visualKnowledge) || undefined,
     exact_asset_guidance: params.exactAssetGuidance || undefined,
-    composition_rules: `Full-bleed edge-to-edge background covering 100% canvas with NO white outer borders or letterboxing. Compose for the FINAL ${params.ratio} frame, keeping every word, title, CTA, face, character, mascot and essential object fully inside its inner safe zone (at least 8% away from every FINAL edge). Some providers return an approximate canvas that is normalized to ${params.ratio} afterward: keep all essential content in the central final frame, with expendable background only outside it. Reflow long headlines or reduce type size before clipping; never cut or omit mandatory words. No text or essential object may touch the final borders.${params.exactAssetGuidance ? ' ' + params.exactAssetGuidance : ''}`,
+    composition_rules: `Generate directly in the FINAL ${params.ratio} frame. Full-bleed edge-to-edge background must fill 100% of the canvas; no outer border, blurred padding, letterbox or later crop. Keep mandatory words, titles, subtitles and CTAs at least 8% inside the final frame; this safe area does not shrink the background or ordinary scenery. Keep faces and essential objects fully visible; reflow long headlines or reduce type size before clipping or omitting mandatory words.${params.exactAssetGuidance ? ' ' + params.exactAssetGuidance : ''}`,
   });
 }
 
@@ -180,25 +184,26 @@ export async function saveImage(
     ? { id: selectedReference.id, summary: selectedReferenceSummary! } : undefined);
   const exactLogoPolicy = await getExactAssetPolicy(agent);
   const exactAssetGuidance = exactLogoPolicy.guidance;
-  const visualReferences = await selectSceneVisualReferences({
-    agent,
-    prompt,
-    channel: variant.channel,
-    position,
-    workspaceId: job.workspace_id,
+  // Exact assets can be visibly present inside Library images. Use their
+  // persisted DNA text without passing those pixels back to the image model.
+  const visualReferences = exactLogoPolicy.hasExactLogoAsset ? [] : await selectSceneVisualReferences({
+    agent, prompt, channel: variant.channel, position, workspaceId: job.workspace_id,
   });
+  let referenceDimensions: { width: number; height: number } | undefined;
   if (selectedReference) {
     const download = await db.storage.from('brand-assets').download(selectedReference.storage_path);
     if (download.error || !download.data) throw new Error('storage_download_failed');
-    visualReferences.unshift({
-      mimeType: selectedReference.mime_type,
-      data: Buffer.from(await download.data.arrayBuffer()).toString('base64'),
-      assetId: selectedReference.id,
+    const referenceBytes = Buffer.from(await download.data.arrayBuffer());
+    const dimensions = await sharp(referenceBytes).metadata();
+    if (dimensions.width && dimensions.height) referenceDimensions = { width: dimensions.width, height: dimensions.height };
+    if (!exactLogoPolicy.hasExactLogoAsset) visualReferences.unshift({
+      mimeType: selectedReference.mime_type, data: referenceBytes.toString('base64'), assetId: selectedReference.id,
     });
   }
-  const referenceDimensions = selectedReference && visualReferences[0]
-    ? await sharp(Buffer.from(visualReferences[0].data, 'base64')).metadata()
-    : undefined;
+  console.info('[Image Reference Input]', { jobId: job.id, selectedReferenceId: selectedReference?.id || null,
+    imageInputs: visualReferences.length, dnaTextUsed: Boolean(visualKnowledge),
+    withheldForExactAsset: exactLogoPolicy.hasExactLogoAsset && Boolean(selectedReference),
+  });
 
   const imagePromptContext = buildImagePromptContext({
     prompt,
@@ -210,7 +215,8 @@ export async function saveImage(
     visualKnowledge: visualKnowledge || undefined,
     exactAssetGuidance: exactAssetGuidance || undefined,
     exactLogoPolicy,
-    instruction: job.payload.origin === 'manual' ? String(job.payload.instruction || '') : undefined,
+    instruction: job.payload.origin === 'manual' || job.payload.origin === 'routine'
+      ? String(job.payload.instruction || '') : undefined,
     selectedReferenceSummary,
     referenceDimensions: referenceDimensions?.width && referenceDimensions?.height
       ? { width: referenceDimensions.width, height: referenceDimensions.height }
@@ -315,7 +321,8 @@ export async function runPipeline(job: Job) {
   const ai = new AIService(job.workspace_id, job.id, agent.id);
   const isRoutine =
     input.origin === 'routine' ||
-    (job.payload as Record<string, unknown>)?.origin === 'routine';
+    (job.payload as Record<string, unknown>)?.origin === 'routine' ||
+    typeof job.payload.routine_weekday === 'number';
 
   const routineSettings = ((agent as unknown as Record<string, unknown>).routine_settings as Record<string, unknown>) || {};
   const instruction = isRoutine ? (input.instruction || (routineSettings.instruction as string) || '') : input.instruction;
@@ -381,6 +388,16 @@ export async function runPipeline(job: Job) {
     checked(await db.from('agent_runs').update({ checkpoint: cache }).eq('job_id', job.id));
   }
   await stage('LOAD_CONTEXT');
+  if (input.reference_asset_id && isRoutine) {
+    const candidate = await requireSelectedReference(job.workspace_id, agent.id, input.reference_asset_id, true, true);
+    if (candidate?.asset_subtype === 'content_reference_staged') {
+      const processed = await processAssetKnowledge(candidate.id);
+      if (processed.status === 'failed') throw new Error(processed.error || 'reference_processing_failed');
+      checked(await db.from('assets').update({ asset_subtype: null })
+        .eq('id', candidate.id).eq('workspace_id', job.workspace_id)
+        .eq('asset_subtype', 'content_reference_staged'));
+    }
+  }
   const selectedReference = await requireSelectedReference(job.workspace_id, agent.id, input.reference_asset_id);
   const referenceSummary = selectedReference
     ? String(job.payload.reference_summary || selectedReference.summary_text)

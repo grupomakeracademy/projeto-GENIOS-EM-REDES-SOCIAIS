@@ -23,6 +23,26 @@ beforeAll(async()=>{
  insert into workspace_members values('${w}','${actor}','ADMIN'); insert into agents(id,workspace_id) values('${agent}','${w}');`);
  await db.exec(await readFile(new URL('../supabase/migrations/202609250001_demand_generation.sql',import.meta.url),'utf8'));
  await db.exec(await readFile(new URL('../supabase/migrations/202609260001_routine_execution.sql',import.meta.url),'utf8'));
+ await db.exec(await readFile(new URL('../supabase/migrations/202609290002_routine_weekday_reference.sql',import.meta.url),'utf8'));
+});
+it('dispatches only the due weekday reference and quality',async()=>{
+ const due=new Date(Date.now()-1000), weekday=due.getUTCDay()||7;
+ const other=weekday===7?1:weekday+1;
+ const selectedRef=randomUUID(),otherRef=randomUUID();
+ await db.query('update agents set routine_settings=$1 where id=$2',[{
+  channels:['instagram'],image_count:1,weekday_settings:{
+   [weekday]:{reference_asset_id:selectedRef,image_quality:'medium'},
+   [other]:{reference_asset_id:otherRef,image_quality:'low'},
+  },
+ },agent]);
+ const sid=randomUUID(),next=new Date(Date.now()+86400000).toISOString();
+ await db.query('insert into agent_schedules values($1,$2,$3,true,$4,$5,$6,$7,$8)',
+  [sid,w,agent,'UTC',due.toISOString().slice(11,16),[weekday],due.toISOString(),actor]);
+ const result=await db.query<{id:string}>('select dispatch_schedule($1,$2,$3,$4) id',
+  [sid,due.toISOString(),next,'fingerprint']);
+ const job=await db.query<{payload:{reference_asset_id:string,image_quality:string}}>('select payload from background_jobs where id=$1',[result.rows[0].id]);
+ expect(job.rows[0].payload.reference_asset_id).toBe(selectedRef);
+ expect(job.rows[0].payload.image_quality).toBe('medium');
 });
 afterAll(async()=>{await db.close();});
 
