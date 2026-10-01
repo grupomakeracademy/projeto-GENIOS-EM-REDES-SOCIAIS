@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   LayoutDashboard,
   SquareCheck,
@@ -14,6 +14,7 @@ import {
   Settings,
   Headphones,
   Menu,
+  X,
   Search,
   Plus,
   Bell,
@@ -23,6 +24,7 @@ import { Brand, Copyright, useT, api, Modal, Empty } from './ui';
 import { ThemeToggle } from './theme-toggle';
 import { QuotaBadge } from './quota-badge';
 import { StorageBadge } from './storage-badge';
+
 const navigation = [
   ['dashboard', LayoutDashboard],
   ['contents', SquareCheck],
@@ -35,6 +37,7 @@ const navigation = [
   ['settings', Settings],
   ['support', Headphones],
 ] as const;
+
 export function Shell({
   children,
   name,
@@ -56,10 +59,47 @@ export function Shell({
     [notifications, setNotifications] = useState<
       { id: string; message: string; href: string }[] | null
     >(null);
+
+  // Lock body scroll when mobile sidebar is open
+  useEffect(() => {
+    if (open) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [open]);
+
+  // Close sidebar on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && open) setOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [open]);
+
+  // Close sidebar on route change
+  useEffect(() => {
+    setOpen(false);
+  }, [path]);
+
   return (
     <div className="app">
-      <aside className={`sidebar ${open ? 'is-open' : ''}`}>
-        <Brand />
+      <aside className={`sidebar ${open ? 'is-open' : ''}`} aria-label="Menu de navegação">
+        <div className="sidebar-header">
+          <Brand />
+          <button
+            type="button"
+            className="sidebar-close-btn"
+            aria-label={t('close')}
+            onClick={() => setOpen(false)}
+          >
+            <X size={20} />
+          </button>
+        </div>
         <nav aria-label={t('dashboard')}>
           {navigation.map(([key, Icon]) => (
             <Link
@@ -68,8 +108,8 @@ export function Shell({
               href={`/${key}${params.get('agent') && ['dashboard', 'contents', 'calendar', 'channels', 'agents'].includes(key) ? '?agent=' + encodeURIComponent(params.get('agent')!) : ''}`}
               className={path.startsWith(`/${key}`) ? 'active' : ''}
             >
-              <Icon size={23} />
-              {t(key)}
+              <Icon size={22} />
+              <span>{t(key)}</span>
             </Link>
           ))}
         </nav>
@@ -93,6 +133,7 @@ export function Shell({
             <small>{role}</small>
           </div>
           <button
+            type="button"
             className="icon-button"
             aria-label={t('logout')}
             onClick={async () => {
@@ -106,16 +147,23 @@ export function Shell({
         </div>
       </aside>
       {open ? (
-        <button className="scrim" aria-label={t('close')} onClick={() => setOpen(false)} />
+        <button
+          type="button"
+          className="scrim"
+          aria-label={t('close')}
+          onClick={() => setOpen(false)}
+        />
       ) : null}
       <div className="main">
         <header className="topbar">
           <button
+            type="button"
             className="icon-button hamburger"
-            aria-label={t('agents')}
+            aria-label={open ? t('close') : 'Menu'}
+            aria-expanded={open}
             onClick={() => setOpen(!open)}
           >
-            <Menu />
+            <Menu size={22} />
           </button>
           <form action="/search" className="search">
             {params.get('agent') && (
@@ -128,6 +176,7 @@ export function Shell({
           <QuotaBadge />
           <ThemeToggle />
           <button
+            type="button"
             className="icon-button"
             aria-label={t('notifications')}
             onClick={async () => {
@@ -147,6 +196,7 @@ export function Shell({
             )}
           </Link>
           <button
+            type="button"
             className="icon-button topbar-logout-btn"
             title={t('logout')}
             aria-label={t('logout')}
