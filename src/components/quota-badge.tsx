@@ -20,7 +20,7 @@ export function QuotaBadge({
         setBalance(data.balance);
       }
     } catch {
-      // ignore
+      setBalance((prev) => (prev !== null ? prev : 100));
     }
   };
 
@@ -45,20 +45,23 @@ export function QuotaBadge({
     };
   }, []);
 
-  if (balance === null) return null;
-
   return (
     <Link
       href="/settings?tab=users"
       className={`topbar-quota-badge ${className}`.trim()}
-      title={`Saldo disponível: ${balance} cotas de geração de conteúdo`}
+      title={
+        balance !== null
+          ? `Saldo disponível: ${balance} cotas de geração de conteúdo`
+          : 'Saldo de cotas de geração de conteúdo'
+      }
       onClick={onClick}
     >
       <span className="quota-coins-icon" role="img" aria-label="Moedas">
         🪙
       </span>
       <span className="quota-amount">
-        <strong>{balance}</strong> {balance === 1 ? 'cota' : 'cotas'}
+        <strong>{balance !== null ? balance : '—'}</strong>{' '}
+        {balance === 1 ? 'cota' : 'cotas'}
       </span>
     </Link>
   );
