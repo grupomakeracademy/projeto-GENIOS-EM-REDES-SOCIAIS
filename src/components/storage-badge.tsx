@@ -11,11 +11,17 @@ export function storageLabel(usage: StorageUsage) {
   const used = mb >= 1024 ? `${number(mb / 1024)} GB` : `${number(mb)} MB`;
   if (usage.isUnlimited) return `${used} de ilimitado`;
   const total = usage.quotaMB >= 1024 ? `${number(usage.quotaMB / 1024)} GB` : `${number(usage.quotaMB)} MB`;
-  const percent = usage.quotaMB > 0 ? mb / usage.quotaMB * 100 : mb > 0 ? 100 : 0;
+  const percent = usage.quotaMB > 0 ? (mb / usage.quotaMB) * 100 : mb > 0 ? 100 : 0;
   return `${used} de ${total} (${number(percent)}%)`;
 }
 
-export function StorageBadge() {
+export function StorageBadge({
+  className = '',
+  onClick,
+}: {
+  className?: string;
+  onClick?: () => void;
+} = {}) {
   const [usage, setUsage] = useState<StorageUsage | null>(null);
   useEffect(() => {
     let active = true;
@@ -26,8 +32,11 @@ export function StorageBadge() {
       try {
         const value = await api('assets/quota?summary=1');
         if (active) setUsage(value);
-      } catch { /* Keep the last confirmed value during a temporary connection failure. */ }
-      finally { pending = false; }
+      } catch {
+        /* Keep the last confirmed value during a temporary connection failure. */
+      } finally {
+        pending = false;
+      }
     };
     void refresh();
     const interval = window.setInterval(refresh, 15000);
@@ -42,8 +51,21 @@ export function StorageBadge() {
       document.removeEventListener('visibilitychange', refresh);
     };
   }, []);
-  return <Link href="/library" className="topbar-storage-badge" title="Armazenamento total da conta" aria-label={usage ? `Armazenamento total da conta: ${storageLabel(usage)}` : 'Carregando armazenamento total da conta'}>
-    <HardDrive size={16} aria-hidden="true" />
-    <span>{usage ? storageLabel(usage) : 'Armazenamento…'}</span>
-  </Link>;
+
+  return (
+    <Link
+      href="/library"
+      className={`topbar-storage-badge ${className}`.trim()}
+      onClick={onClick}
+      title="Armazenamento total da conta"
+      aria-label={
+        usage
+          ? `Armazenamento total da conta: ${storageLabel(usage)}`
+          : 'Carregando armazenamento total da conta'
+      }
+    >
+      <HardDrive size={16} aria-hidden="true" />
+      <span>{usage ? storageLabel(usage) : 'Armazenamento…'}</span>
+    </Link>
+  );
 }

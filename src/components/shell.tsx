@@ -103,6 +103,9 @@ export function Shell({
         <div className="sidebar-quota-wrap">
           <QuotaBadge onClick={() => setOpen(false)} />
         </div>
+        <div className="sidebar-storage-wrap">
+          <StorageBadge onClick={() => setOpen(false)} />
+        </div>
         <nav aria-label={t('dashboard')}>
           {navigation.map(([key, Icon]) => (
             <Link
@@ -175,7 +178,9 @@ export function Shell({
             <Search size={19} />
             <input aria-label={t('search')} name="q" placeholder={t('search')} minLength={2} />
           </form>
-          <StorageBadge />
+          <div className="topbar-storage-wrap">
+            <StorageBadge />
+          </div>
           <div className="topbar-quota-wrap">
             <QuotaBadge />
           </div>
