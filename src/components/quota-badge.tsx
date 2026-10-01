@@ -4,7 +4,13 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { api } from './ui';
 
-export function QuotaBadge() {
+export function QuotaBadge({
+  className = '',
+  onClick,
+}: {
+  className?: string;
+  onClick?: () => void;
+} = {}) {
   const [balance, setBalance] = useState<number | null>(null);
 
   const refreshBalance = async () => {
@@ -44,8 +50,9 @@ export function QuotaBadge() {
   return (
     <Link
       href="/settings?tab=users"
-      className="topbar-quota-badge"
+      className={`topbar-quota-badge ${className}`.trim()}
       title={`Saldo disponível: ${balance} cotas de geração de conteúdo`}
+      onClick={onClick}
     >
       <span className="quota-coins-icon" role="img" aria-label="Moedas">
         🪙

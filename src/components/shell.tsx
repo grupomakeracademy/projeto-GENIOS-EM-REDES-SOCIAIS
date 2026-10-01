@@ -100,6 +100,9 @@ export function Shell({
             <X size={20} />
           </button>
         </div>
+        <div className="sidebar-quota-wrap">
+          <QuotaBadge onClick={() => setOpen(false)} />
+        </div>
         <nav aria-label={t('dashboard')}>
           {navigation.map(([key, Icon]) => (
             <Link
@@ -173,7 +176,9 @@ export function Shell({
             <input aria-label={t('search')} name="q" placeholder={t('search')} minLength={2} />
           </form>
           <StorageBadge />
-          <QuotaBadge />
+          <div className="topbar-quota-wrap">
+            <QuotaBadge />
+          </div>
           <ThemeToggle />
           <button
             type="button"
