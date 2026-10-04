@@ -152,20 +152,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         .parse(raw);
       if (Date.parse(v.scheduled_at) <= Date.now()) throw new AppError('invalid_schedule');
       Object.assign(payload, v);
-
-      if (v.destination) {
-        const curStrat = (item.strategy as Record<string, unknown>) || {};
-        await db
-          .from('content_items')
-          .update({
-            strategy: {
-              ...curStrat,
-              destination: v.destination,
-            },
-          })
-          .eq('id', id)
-          .eq('workspace_id', ctx.workspaceId);
-      }
     }
     if (action === 'publish') {
       const v = z.object({
@@ -213,6 +199,22 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         result.error.message.includes('conflict') ? 'conflict' : 'invalid_input',
         409,
       );
+
+    if (action === 'schedule' && payload.destination) {
+      const curStrat = (item.strategy as Record<string, unknown>) || {};
+      if (curStrat.destination !== payload.destination) {
+        await db
+          .from('content_items')
+          .update({
+            strategy: {
+              ...curStrat,
+              destination: payload.destination,
+            },
+          })
+          .eq('id', id)
+          .eq('workspace_id', ctx.workspaceId);
+      }
+    }
     return Response.json({ ok: true });
   } catch (e) {
     return fail(e);

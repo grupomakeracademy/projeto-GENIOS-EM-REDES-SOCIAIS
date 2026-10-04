@@ -267,6 +267,35 @@ export class InstagramConnector implements SocialConnector {
         const { id: postId } = (await publishRes.json()) as { id: string };
         const postUrl = await getIgPermalink(apiBase, postId, token!, `https://instagram.com/p/${postId}`);
 
+        // Se o destino for Feed e Stories, publica também nos Stories
+        if (destination === 'feed_and_stories' && mediaUrls.length > 0) {
+          try {
+            const storyContainerRes = await fetch(`${apiBase}/${targetId}/media`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                image_url: mediaUrls[0],
+                media_type: 'STORIES',
+                access_token: token,
+              }),
+            });
+            if (storyContainerRes.ok) {
+              const { id: storyCreationId } = (await storyContainerRes.json()) as { id: string };
+              await waitForIgContainer(apiBase, storyCreationId, token!);
+              await fetch(`${apiBase}/${targetId}/media_publish`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  creation_id: storyCreationId,
+                  access_token: token,
+                }),
+              });
+            }
+          } catch (storyErr) {
+            console.error('[InstagramConnector] Story publish in single image feed_and_stories error:', storyErr);
+          }
+        }
+
         return {
           success: true,
           externalPostId: postId,

@@ -1,7 +1,7 @@
 'use client';
 import './content.css';
 import {CaptionEditor} from '@/features/captions/editor';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import {
   X,
@@ -85,6 +85,12 @@ export function ContentDetail({
     [date, setDate] = useState(''),
     [reviewModalOpen, setReviewModalOpen] = useState(false),
     [generatingDraft, setGeneratingDraft] = useState(false);
+
+  useEffect(() => {
+    setItem(initial);
+    const dest = (initial.strategy as Record<string, unknown>)?.destination as Destination | undefined;
+    if (dest) setDestination(dest);
+  }, [initial]);
   const isDraft = item.status === 'DRAFT';
   const variant = item.content_variants[index];
 
@@ -127,8 +133,39 @@ export function ContentDetail({
   async function operation(name: string, extra: Record<string, unknown> = {}) {
     await action.act(
       async () => {
-        await api(`content/${item.id}`, 'POST', { action: name, version: item.version, ...extra });
-        const latest = await api(`content/${item.id}`);
+        let currentItem = item;
+        // If caption was edited in the editor and not saved yet, save it before scheduling or publishing
+        if ((name === 'schedule' || name === 'publish') && variant && caption !== (variant.caption || '')) {
+          try {
+            await api('captions', 'PATCH', { variant_id: variant.id, caption, version: currentItem.version });
+          } catch (err: unknown) {
+            if (err instanceof Error && err.message === 'conflict') {
+              const fresh = await api(`content/${currentItem.id}`);
+              currentItem = fresh;
+              setItem(fresh);
+              await api('captions', 'PATCH', { variant_id: variant.id, caption, version: fresh.version });
+            } else {
+              throw err;
+            }
+          }
+          const afterSave = await api(`content/${currentItem.id}`);
+          currentItem = afterSave;
+          setItem(afterSave);
+        }
+
+        try {
+          await api(`content/${currentItem.id}`, 'POST', { action: name, version: currentItem.version, ...extra });
+        } catch (err: unknown) {
+          if (err instanceof Error && err.message === 'conflict') {
+            const fresh = await api(`content/${currentItem.id}`);
+            currentItem = fresh;
+            setItem(fresh);
+            await api(`content/${currentItem.id}`, 'POST', { action: name, version: fresh.version, ...extra });
+          } else {
+            throw err;
+          }
+        }
+        const latest = await api(`content/${currentItem.id}`);
         setItem(latest);
         setCaption(latest.content_variants[index]?.caption || '');
         router.refresh();
@@ -364,10 +401,40 @@ export function ContentDetail({
                 </div>
               ) : (
                 <>
-                  <CaptionEditor key={variant.id} scope="content" id={item.id} variantId={variant.id}
-                    value={caption} onChange={setCaption} limit={channels[variant.channel].limit}
-                    disabled={!canEdit || ['GENERATING','PUBLISHING','PUBLISHED','ARCHIVED'].includes(item.status)}
-                    onSave={async()=>{await api('captions','PATCH',{variant_id:variant.id,caption,version:item.version});const latest=await api('content/'+item.id);setItem(latest);router.refresh();}}/>
+                  <CaptionEditor
+                    key={variant.id}
+                    scope="content"
+                    id={item.id}
+                    variantId={variant.id}
+                    value={caption}
+                    onChange={setCaption}
+                    limit={channels[variant.channel].limit}
+                    disabled={!canEdit || ['GENERATING', 'PUBLISHING', 'PUBLISHED', 'ARCHIVED'].includes(item.status)}
+                    onSave={async () => {
+                      try {
+                        await api('captions', 'PATCH', {
+                          variant_id: variant.id,
+                          caption,
+                          version: item.version,
+                        });
+                      } catch (err: unknown) {
+                        if (err instanceof Error && err.message === 'conflict') {
+                          const fresh = await api(`content/${item.id}`);
+                          setItem(fresh);
+                          await api('captions', 'PATCH', {
+                            variant_id: variant.id,
+                            caption,
+                            version: fresh.version,
+                          });
+                        } else {
+                          throw err;
+                        }
+                      }
+                      const latest = await api(`content/${item.id}`);
+                      setItem(latest);
+                      router.refresh();
+                    }}
+                  />
                 </>
               )
             ) : (
